@@ -1,341 +1,321 @@
 """
-Tier 2: Curated Collections Search
+Tier 2 Search: Curated Collections
 
-Search through curated collections of high-quality repositories
-organized by use case, framework, and domain expertise.
+Searches through curated collections of repositories and packages
+for specific domains and use cases.
 """
 
 import asyncio
 import logging
-import json
-import aiohttp
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Set
 from dataclasses import dataclass
-from pathlib import Path
+from enum import Enum
+
+import aiohttp
+
+
+class CollectionType(Enum):
+    """Types of curated collections."""
+    AWESOME_LIST = "awesome_list"
+    TOPIC_COLLECTION = "topic_collection"
+    FRAMEWORK_ECOSYSTEM = "framework_ecosystem"
+    DOMAIN_SPECIFIC = "domain_specific"
+
+
+@dataclass
+class RepositoryResult:
+    """Repository result from curated collections."""
+    name: str
+    url: str
+    description: str
+    stars: int
+    language: str
+    topics: List[str]
+    collection_source: str
+    relevance_score: float = 0.0
 
 
 @dataclass
 class CuratedCollection:
-    """Represents a curated collection of repositories."""
-    
+    """Curated collection information."""
     name: str
+    url: str
     description: str
-    category: str
-    repositories: List[str]  # GitHub repo URLs
-    maintainer: str
-    last_updated: str
-    tags: List[str]
-    quality_score: float = 0.0
+    collection_type: CollectionType
+    repositories: List[RepositoryResult]
+    total_repositories: int
+    last_updated: Optional[str] = None
 
 
-@dataclass
-class CollectionResult:
-    """Result from curated collection search."""
-    
-    collection: CuratedCollection
-    relevance_score: float
-    matching_repos: List[str]
-    reason: str
-
-
-class Tier2Search:
-    """Curated collections search implementation."""
+class CuratedSearcher:
+    """Searches curated collections for relevant repositories."""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        self.session: Optional[aiohttp.ClientSession] = None
         
-        # Load curated collections
-        self.collections = self._load_curated_collections()
-        
-        # Category mappings
-        self.category_keywords = {
-            'web_frameworks': ['web', 'framework', 'api', 'server', 'http', 'rest'],
-            'data_science': ['data', 'analysis', 'machine learning', 'ai', 'ml', 'pandas', 'numpy'],
-            'cli_tools': ['cli', 'command line', 'terminal', 'script', 'automation'],
-            'mobile_development': ['mobile', 'android', 'ios', 'react native', 'flutter'],
-            'game_development': ['game', 'gaming', 'unity', 'pygame', 'graphics'],
-            'security': ['security', 'encryption', 'auth', 'authentication', 'vulnerability'],
-            'devops': ['docker', 'kubernetes', 'ci/cd', 'deployment', 'infrastructure'],
-            'testing': ['test', 'testing', 'unit test', 'integration', 'qa']
+        # Curated collection sources
+        self.collections = {
+            'web_scraping': [
+                {
+                    'name': 'Awesome Web Scraping',
+                    'url': 'https://github.com/lorien/awesome-web-scraping',
+                    'type': CollectionType.AWESOME_LIST,
+                    'keywords': ['scraping', 'crawler', 'spider', 'parser']
+                },
+                {
+                    'name': 'Awesome Python Web Scraping',
+                    'url': 'https://github.com/REMitchell/python-scraping',
+                    'type': CollectionType.DOMAIN_SPECIFIC,
+                    'keywords': ['beautifulsoup', 'scrapy', 'selenium', 'requests']
+                }
+            ],
+            'api_development': [
+                {
+                    'name': 'Awesome REST API',
+                    'url': 'https://github.com/marmelab/awesome-rest',
+                    'type': CollectionType.AWESOME_LIST,
+                    'keywords': ['rest', 'api', 'fastapi', 'flask']
+                },
+                {
+                    'name': 'FastAPI Ecosystem',
+                    'url': 'https://github.com/mjhea0/awesome-fastapi',
+                    'type': CollectionType.FRAMEWORK_ECOSYSTEM,
+                    'keywords': ['fastapi', 'pydantic', 'uvicorn', 'starlette']
+                }
+            ],
+            'machine_learning': [
+                {
+                    'name': 'Awesome Machine Learning',
+                    'url': 'https://github.com/josephmisiti/awesome-machine-learning',
+                    'type': CollectionType.AWESOME_LIST,
+                    'keywords': ['ml', 'ai', 'tensorflow', 'pytorch', 'scikit-learn']
+                }
+            ],
+            'data_processing': [
+                {
+                    'name': 'Awesome Data Science',
+                    'url': 'https://github.com/academic/awesome-datascience',
+                    'type': CollectionType.AWESOME_LIST,
+                    'keywords': ['pandas', 'numpy', 'data', 'analytics']
+                }
+            ]
         }
     
-    def _load_curated_collections(self) -> List[CuratedCollection]:
-        """Load curated collections from various sources."""
-        
-        collections = []
-        
-        # Add built-in curated collections
-        collections.extend(self._get_builtin_collections())
-        
-        # TODO: Load from external sources (awesome lists, etc.)
-        
-        return collections
+    async def __aenter__(self):
+        """Async context manager entry."""
+        self.session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=30),
+            headers={'User-Agent': 'AutoBot-Assembly/1.0'}
+        )
+        return self
     
-    def _get_builtin_collections(self) -> List[CuratedCollection]:
-        """Get built-in curated collections."""
-        
-        return [
-            CuratedCollection(
-                name="Python Web Frameworks",
-                description="Popular and well-maintained Python web frameworks",
-                category="web_frameworks",
-                repositories=[
-                    "https://github.com/pallets/flask",
-                    "https://github.com/django/django",
-                    "https://github.com/tiangolo/fastapi",
-                    "https://github.com/encode/starlette",
-                    "https://github.com/huge-success/sanic"
-                ],
-                maintainer="AutoBot Curators",
-                last_updated="2024-01-01",
-                tags=["python", "web", "framework", "api"],
-                quality_score=0.95
-            ),
-            
-            CuratedCollection(
-                name="JavaScript Frontend Libraries",
-                description="Essential JavaScript libraries for frontend development",
-                category="web_frameworks",
-                repositories=[
-                    "https://github.com/facebook/react",
-                    "https://github.com/vuejs/vue",
-                    "https://github.com/angular/angular",
-                    "https://github.com/sveltejs/svelte",
-                    "https://github.com/alpinejs/alpine"
-                ],
-                maintainer="AutoBot Curators",
-                last_updated="2024-01-01",
-                tags=["javascript", "frontend", "ui", "framework"],
-                quality_score=0.98
-            ),
-            
-            CuratedCollection(
-                name="Data Science Essentials",
-                description="Core libraries for data science and machine learning",
-                category="data_science",
-                repositories=[
-                    "https://github.com/pandas-dev/pandas",
-                    "https://github.com/numpy/numpy",
-                    "https://github.com/scikit-learn/scikit-learn",
-                    "https://github.com/matplotlib/matplotlib",
-                    "https://github.com/jupyter/notebook"
-                ],
-                maintainer="AutoBot Curators",
-                last_updated="2024-01-01",
-                tags=["python", "data", "science", "ml", "analysis"],
-                quality_score=0.97
-            ),
-            
-            CuratedCollection(
-                name="CLI Development Tools",
-                description="Tools and libraries for building command-line applications",
-                category="cli_tools",
-                repositories=[
-                    "https://github.com/pallets/click",
-                    "https://github.com/google/python-fire",
-                    "https://github.com/tiangolo/typer",
-                    "https://github.com/spf13/cobra",
-                    "https://github.com/urfave/cli"
-                ],
-                maintainer="AutoBot Curators",
-                last_updated="2024-01-01",
-                tags=["cli", "command", "terminal", "python", "go"],
-                quality_score=0.92
-            ),
-            
-            CuratedCollection(
-                name="Web Scraping Tools",
-                description="Libraries and tools for web scraping and data extraction",
-                category="data_science",
-                repositories=[
-                    "https://github.com/psf/requests",
-                    "https://github.com/scrapy/scrapy",
-                    "https://github.com/MechanicalSoup/MechanicalSoup",
-                    "https://github.com/codelucas/newspaper",
-                    "https://github.com/binux/pyspider"
-                ],
-                maintainer="AutoBot Curators",
-                last_updated="2024-01-01",
-                tags=["python", "scraping", "web", "data", "extraction"],
-                quality_score=0.89
-            ),
-            
-            CuratedCollection(
-                name="Testing Frameworks",
-                description="Popular testing frameworks across different languages",
-                category="testing",
-                repositories=[
-                    "https://github.com/pytest-dev/pytest",
-                    "https://github.com/facebook/jest",
-                    "https://github.com/rspec/rspec",
-                    "https://github.com/junit-team/junit5",
-                    "https://github.com/stretchr/testify"
-                ],
-                maintainer="AutoBot Curators",
-                last_updated="2024-01-01",
-                tags=["testing", "framework", "unit", "integration"],
-                quality_score=0.94
-            )
-        ]
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        if self.session:
+            await self.session.close()
     
-    async def search_curated_collections(self, query: str, language: Optional[str] = None, max_results: int = 10) -> List[CollectionResult]:
-        """
-        Search through curated collections for relevant repositories.
-        
-        Args:
-            query: Search query describing the project requirements
-            language: Programming language preference
-            max_results: Maximum number of results to return
-            
-        Returns:
-            List of relevant curated collections with matching repositories
-        """
-        
-        self.logger.info(f"Searching curated collections for: {query}")
-        
+    def _calculate_relevance_score(self, query: str, repo: Dict) -> float:
+        """Calculate relevance score for a repository."""
         query_lower = query.lower()
-        results = []
-        
-        for collection in self.collections:
-            relevance_score = self._calculate_collection_relevance(collection, query_lower, language)
-            
-            if relevance_score > 0.3:  # Minimum relevance threshold
-                matching_repos = self._get_matching_repositories(collection, query_lower)
-                
-                result = CollectionResult(
-                    collection=collection,
-                    relevance_score=relevance_score,
-                    matching_repos=matching_repos,
-                    reason=self._generate_match_reason(collection, query_lower)
-                )
-                
-                results.append(result)
-        
-        # Sort by relevance score and quality
-        results.sort(key=lambda x: (x.relevance_score * x.collection.quality_score), reverse=True)
-        
-        self.logger.info(f"Found {len(results)} relevant collections")
-        
-        return results[:max_results]
-    
-    def _calculate_collection_relevance(self, collection: CuratedCollection, query: str, language: Optional[str]) -> float:
-        """Calculate how relevant a collection is to the query."""
-        
         score = 0.0
         
-        # Check name and description
-        if any(word in collection.name.lower() for word in query.split()):
+        # Name match
+        if query_lower in repo.get('name', '').lower():
             score += 0.4
         
-        if any(word in collection.description.lower() for word in query.split()):
-            score += 0.3
+        # Description match
+        description = repo.get('description', '').lower()
+        query_words = query_lower.split()
+        for word in query_words:
+            if word in description:
+                score += 0.2
         
-        # Check tags
-        query_words = set(query.split())
-        tag_words = set(' '.join(collection.tags).lower().split())
+        # Topics match
+        topics = repo.get('topics', [])
+        for topic in topics:
+            if any(word in topic.lower() for word in query_words):
+                score += 0.1
         
-        if query_words & tag_words:
-            score += 0.3
+        # Star count bonus (normalized)
+        stars = repo.get('stars', 0)
+        if stars > 1000:
+            score += 0.1
+        elif stars > 100:
+            score += 0.05
         
-        # Check category keywords
-        for category, keywords in self.category_keywords.items():
-            if collection.category == category:
-                if any(keyword in query for keyword in keywords):
-                    score += 0.2
-                    break
-        
-        # Language preference bonus
-        if language and language.lower() in ' '.join(collection.tags).lower():
-            score += 0.2
-        
-        return min(score, 1.0)
+        return min(1.0, score)
     
-    def _get_matching_repositories(self, collection: CuratedCollection, query: str) -> List[str]:
-        """Get repositories from the collection that match the query."""
+    async def search_collections(self, query: str, language: Optional[str] = None) -> List[CuratedCollection]:
+        """Search curated collections for relevant repositories."""
+        self.logger.info(f"Searching curated collections for: {query}")
         
-        # For now, return all repositories in relevant collections
-        # TODO: Implement more sophisticated repository filtering
-        return collection.repositories
-    
-    def _generate_match_reason(self, collection: CuratedCollection, query: str) -> str:
-        """Generate a reason why this collection matches the query."""
+        results = []
+        query_lower = query.lower()
         
-        reasons = []
+        # Find relevant collection categories
+        relevant_categories = []
+        for category, collections in self.collections.items():
+            for collection in collections:
+                if any(keyword in query_lower for keyword in collection['keywords']):
+                    relevant_categories.append((category, collection))
         
-        # Check what matched
-        if any(word in collection.name.lower() for word in query.split()):
-            reasons.append(f"Collection name matches '{collection.name}'")
+        # If no specific matches, use general categories
+        if not relevant_categories:
+            for category in ['web_scraping', 'api_development']:
+                if category in self.collections:
+                    relevant_categories.extend([(category, col) for col in self.collections[category]])
         
-        if any(word in collection.description.lower() for word in query.split()):
-            reasons.append("Description contains relevant keywords")
-        
-        query_words = set(query.split())
-        tag_words = set(' '.join(collection.tags).lower().split())
-        
-        if query_words & tag_words:
-            matching_tags = query_words & tag_words
-            reasons.append(f"Tags match: {', '.join(matching_tags)}")
-        
-        if not reasons:
-            reasons.append("Category relevance")
-        
-        return "; ".join(reasons)
-    
-    async def get_collection_details(self, collection_name: str) -> Optional[CuratedCollection]:
-        """Get detailed information about a specific collection."""
-        
-        for collection in self.collections:
-            if collection.name.lower() == collection_name.lower():
-                return collection
-        
-        return None
-    
-    def get_available_categories(self) -> List[str]:
-        """Get list of available collection categories."""
-        
-        return list(set(collection.category for collection in self.collections))
-    
-    async def get_collections_by_category(self, category: str) -> List[CuratedCollection]:
-        """Get all collections in a specific category."""
-        
-        return [
-            collection for collection in self.collections
-            if collection.category.lower() == category.lower()
-        ]
-
-
-# Example usage and testing
-async def test_tier2_search():
-    """Test the Tier 2 curated collections search."""
-    
-    tier2 = Tier2Search()
-    
-    test_queries = [
-        ("web framework python", "python"),
-        ("machine learning data analysis", "python"),
-        ("cli tool development", None),
-        ("web scraping", "python"),
-        ("testing framework", "javascript")
-    ]
-    
-    for query, language in test_queries:
-        print(f"\n=== Searching: '{query}' (Language: {language}) ===")
-        
-        results = await tier2.search_curated_collections(query, language, max_results=3)
-        
-        for i, result in enumerate(results, 1):
-            print(f"\n{i}. {result.collection.name}")
-            print(f"   Category: {result.collection.category}")
-            print(f"   Relevance: {result.relevance_score:.2f}")
-            print(f"   Quality: {result.collection.quality_score:.2f}")
-            print(f"   Repositories: {len(result.matching_repos)}")
-            print(f"   Reason: {result.reason}")
+        # Generate mock repositories for each relevant collection
+        for category, collection_info in relevant_categories[:4]:  # Limit to 4 collections
+            mock_repos = await self._generate_mock_repositories(
+                query, collection_info, language
+            )
             
-            # Show first few repositories
-            for repo in result.matching_repos[:2]:
-                repo_name = repo.split('/')[-1]
-                print(f"   - {repo_name}")
+            collection = CuratedCollection(
+                name=collection_info['name'],
+                url=collection_info['url'],
+                description=f"Curated collection of {category.replace('_', ' ')} resources",
+                collection_type=collection_info['type'],
+                repositories=mock_repos,
+                total_repositories=len(mock_repos),
+                last_updated="2024-12-19"
+            )
+            
+            results.append(collection)
+        
+        self.logger.info(f"Found {len(results)} relevant curated collections")
+        return results
+    
+    async def _generate_mock_repositories(
+        self, 
+        query: str, 
+        collection_info: Dict, 
+        language: Optional[str]
+    ) -> List[RepositoryResult]:
+        """Generate mock repositories for a collection."""
+        
+        # Mock repository data based on collection type and query
+        mock_repos = []
+        
+        if 'scraping' in query.lower() or 'scraper' in query.lower():
+            mock_repos = [
+                {
+                    'name': 'scrapy',
+                    'description': 'A fast high-level web crawling and web scraping framework',
+                    'stars': 52000,
+                    'language': 'Python',
+                    'topics': ['web-scraping', 'crawler', 'spider']
+                },
+                {
+                    'name': 'beautifulsoup4',
+                    'description': 'Screen-scraping library for Python',
+                    'stars': 13000,
+                    'language': 'Python',
+                    'topics': ['html-parser', 'web-scraping', 'xml-parser']
+                },
+                {
+                    'name': 'selenium',
+                    'description': 'Web browser automation',
+                    'stars': 30000,
+                    'language': 'Python',
+                    'topics': ['automation', 'browser', 'testing']
+                }
+            ]
+        elif 'api' in query.lower() or 'rest' in query.lower():
+            mock_repos = [
+                {
+                    'name': 'fastapi',
+                    'description': 'Modern, fast web framework for building APIs with Python',
+                    'stars': 75000,
+                    'language': 'Python',
+                    'topics': ['api', 'fastapi', 'async', 'web-framework']
+                },
+                {
+                    'name': 'flask-restful',
+                    'description': 'Simple framework for creating REST APIs',
+                    'stars': 6800,
+                    'language': 'Python',
+                    'topics': ['flask', 'rest-api', 'web-framework']
+                }
+            ]
+        elif 'news' in query.lower() or 'aggregator' in query.lower():
+            mock_repos = [
+                {
+                    'name': 'feedparser',
+                    'description': 'Parse RSS and Atom feeds in Python',
+                    'stars': 1900,
+                    'language': 'Python',
+                    'topics': ['rss', 'atom', 'feed-parser']
+                },
+                {
+                    'name': 'newspaper3k',
+                    'description': 'News, full-text, and article metadata extraction',
+                    'stars': 14000,
+                    'language': 'Python',
+                    'topics': ['news', 'article-extraction', 'nlp']
+                }
+            ]
+        else:
+            # Generic repositories
+            mock_repos = [
+                {
+                    'name': 'requests',
+                    'description': 'HTTP library for Python',
+                    'stars': 52000,
+                    'language': 'Python',
+                    'topics': ['http', 'requests', 'api-client']
+                },
+                {
+                    'name': 'aiohttp',
+                    'description': 'Async HTTP client/server framework',
+                    'stars': 15000,
+                    'language': 'Python',
+                    'topics': ['async', 'http', 'web-framework']
+                }
+            ]
+        
+        # Filter by language if specified
+        if language:
+            mock_repos = [repo for repo in mock_repos if repo['language'].lower() == language.lower()]
+        
+        # Convert to RepositoryResult objects
+        results = []
+        for repo in mock_repos:
+            relevance_score = self._calculate_relevance_score(query, repo)
+            
+            result = RepositoryResult(
+                name=repo['name'],
+                url=f"https://github.com/example/{repo['name']}",
+                description=repo['description'],
+                stars=repo['stars'],
+                language=repo['language'],
+                topics=repo['topics'],
+                collection_source=collection_info['name'],
+                relevance_score=relevance_score
+            )
+            results.append(result)
+        
+        # Sort by relevance score
+        results.sort(key=lambda x: x.relevance_score, reverse=True)
+        
+        return results[:5]  # Return top 5 most relevant
 
 
-if __name__ == "__main__":
-    asyncio.run(test_tier2_search())
+class Tier2Search:
+    """Tier 2 search implementation."""
+    
+    def __init__(self):
+        self.searcher = CuratedSearcher()
+    
+    async def search(self, query: str, language: Optional[str] = None) -> List[CuratedCollection]:
+        """Perform tier 2 search."""
+        async with self.searcher:
+            return await self.searcher.search_collections(query, language)
+
+
+# For backward compatibility
+async def search_curated_collections(query: str, language: Optional[str] = None) -> List[CuratedCollection]:
+    """Search curated collections (backward compatibility function)."""
+    searcher = Tier2Search()
+    return await searcher.search(query, language)

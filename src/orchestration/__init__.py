@@ -1,15 +1,15 @@
 """
 Orchestration Module
 
-AI-powered project analysis and search coordination.
+Coordinates project analysis and search operations for the AutoBot Assembly System.
 """
 
-from .project_analyzer import ProjectAnalyzer, AnalysisResult, ProjectType
+from .project_analyzer import ProjectAnalyzer, ProjectAnalysis, ProjectType
 from .search_orchestrator import SearchOrchestrator, SearchResults
 
 __all__ = [
     'ProjectAnalyzer',
-    'AnalysisResult', 
+    'ProjectAnalysis', 
     'ProjectType',
     'SearchOrchestrator',
     'SearchResults'

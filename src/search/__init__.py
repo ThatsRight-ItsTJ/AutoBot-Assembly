@@ -1,18 +1,19 @@
 """
 Search Module
 
-Multi-tier search system for discovering relevant repositories and packages.
+Multi-tier search system for discovering packages, repositories, and resources.
 """
 
-from .tier1_packages import Tier1Search, PackageResult
-from .tier2_curated import Tier2Search, CollectionResult
-from .tier3_discovery import Tier3Search, RepositoryInfo
+from .tier1_packages import PackageSearcher, PackageResult
+from .tier2_curated import CuratedSearcher, CuratedCollection, RepositoryResult
+from .tier3_discovery import GitHubDiscoverer, DiscoveredRepository
 
 __all__ = [
-    'Tier1Search',
+    'PackageSearcher',
     'PackageResult',
-    'Tier2Search', 
-    'CollectionResult',
-    'Tier3Search',
-    'RepositoryInfo'
+    'CuratedSearcher', 
+    'CuratedCollection',
+    'RepositoryResult',
+    'GitHubDiscoverer',
+    'DiscoveredRepository'
 ]
