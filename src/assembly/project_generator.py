@@ -3,17 +3,18 @@
 Project Generator
 
 Handles the final assembly of projects from analyzed components,
-including file generation, structure creation, and comprehensive report generation.
+including file generation, structure creation, and AI-integrated comprehensive reporting.
 """
 
 import os
 import json
 import shutil
+import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
-from ..reporting.project_reporter import ProjectReporter
+from ..reporting.ai_integrated_reporter import AIIntegratedReporter
 
 
 @dataclass
@@ -27,28 +28,32 @@ class GeneratedProject:
 
 
 class ProjectGenerator:
-    """Generates complete project structures with comprehensive reporting."""
+    """Generates complete project structures with AI-integrated comprehensive reporting."""
     
     def __init__(self):
-        self.reporter = ProjectReporter()
+        self.ai_reporter = AIIntegratedReporter()
     
-    def generate_project(
+    async def generate_project(
         self,
         project_name: str,
         output_dir: str,
         files: Dict[str, str],
+        project_description: str = "",
+        language: str = "python",
         repositories: List[Dict] = None,
         generate_report: bool = True
     ) -> GeneratedProject:
         """
-        Generate a complete project with files and comprehensive report.
+        Generate a complete project with files and AI-integrated comprehensive report.
         
         Args:
             project_name: Name of the project
             output_dir: Directory to create the project in
             files: Dictionary of {file_path: content}
+            project_description: Description of the project for AI analysis
+            language: Primary programming language
             repositories: List of source repository information
-            generate_report: Whether to generate a comprehensive report
+            generate_report: Whether to generate AI-integrated comprehensive report
             
         Returns:
             GeneratedProject with details about the created project
@@ -74,21 +79,39 @@ class ProjectGenerator:
             created_files.append(file_path)
             total_size += len(content.encode('utf-8'))
         
-        # Generate comprehensive report
+        # Generate AI-integrated comprehensive report
         report_path = None
-        if generate_report:
-            report = self.reporter.analyze_project(
-                str(project_path),
-                repositories or []
-            )
-            
-            # Save report
-            report_path = project_path / f"{project_name}_assembly_report.md"
-            self.reporter.save_report(report, str(report_path), format='markdown')
-            
-            # Also save JSON version for programmatic access
-            json_report_path = project_path / f"{project_name}_assembly_report.json"
-            self.reporter.save_report(report, str(json_report_path), format='json')
+        if generate_report and project_description:
+            try:
+                print("🤖 Generating AI-integrated project report...")
+                ai_report = await self.ai_reporter.generate_ai_integrated_report(
+                    str(project_path),
+                    project_description,
+                    language,
+                    repositories or []
+                )
+                
+                # Save as README.md in project directory
+                report_path = self.ai_reporter.save_report(
+                    ai_report, 
+                    str(project_path), 
+                    "README.md"
+                )
+                
+                print(f"✅ AI-integrated report saved to: {report_path}")
+                
+            except Exception as e:
+                print(f"⚠️ AI report generation failed: {e}")
+                print("📝 Falling back to basic report generation...")
+                
+                # Fallback to basic report
+                basic_report_content = self._generate_basic_report(
+                    project_name, created_files, total_size, repositories or []
+                )
+                
+                report_path = project_path / "README.md"
+                with open(report_path, 'w', encoding='utf-8') as f:
+                    f.write(basic_report_content)
         
         return GeneratedProject(
             name=project_name,
@@ -97,6 +120,42 @@ class ProjectGenerator:
             size=total_size,
             report_path=str(report_path) if report_path else None
         )
+    
+    def _generate_basic_report(
+        self, 
+        project_name: str, 
+        files: List[str], 
+        total_size: int,
+        repositories: List[Dict]
+    ) -> str:
+        """Generate a basic report when AI analysis fails."""
+        
+        md = []
+        md.append(f"# {project_name}")
+        md.append("")
+        md.append("## Project Overview")
+        md.append(f"Generated by AutoBot Assembly System")
+        md.append("")
+        md.append("## Files Generated")
+        md.append(f"- **Total Files:** {len(files)}")
+        md.append(f"- **Total Size:** {total_size} bytes")
+        md.append("")
+        
+        for file in files:
+            md.append(f"- {file}")
+        
+        md.append("")
+        
+        if repositories:
+            md.append("## Source Repositories")
+            for repo in repositories:
+                md.append(f"- **{repo.get('name', 'Unknown')}**: {repo.get('url', '')}")
+        
+        md.append("")
+        md.append("---")
+        md.append("*Generated by AutoBot Assembly System*")
+        
+        return "\n".join(md)
     
     def clone_and_analyze_repository(
         self,
