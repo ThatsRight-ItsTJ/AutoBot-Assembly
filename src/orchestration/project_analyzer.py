@@ -11,6 +11,7 @@ from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 import json
+import os
 
 # Import AI providers
 try:
@@ -51,11 +52,15 @@ class ProjectAnalyzer:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         
+        # Set Pollinations API key
+        self.pollinations_api_key = "D6ivBlSgXRsU1F7r"
+        
         # AI provider configurations
         self.ai_providers = {
             'pollinations': {
                 'url': 'https://text.pollinations.ai/',
-                'available': aiohttp is not None
+                'available': aiohttp is not None,
+                'api_key': self.pollinations_api_key
             }
         }
         
@@ -132,27 +137,41 @@ class ProjectAnalyzer:
                 Format as JSON with keys: name, type, language, components, dependencies, confidence, complexity, architecture
                 """
                 
+                headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {self.pollinations_api_key}',
+                    'User-Agent': 'AutoBot-Assembly/1.0'
+                }
+                
+                payload = {
+                    'messages': [
+                        {
+                            'role': 'system',
+                            'content': 'You are an expert software architect. Analyze project requirements and provide structured technical specifications in valid JSON format.'
+                        },
+                        {
+                            'role': 'user',
+                            'content': analysis_prompt
+                        }
+                    ],
+                    'model': 'openai',
+                    'seed': 42,
+                    'jsonMode': True
+                }
+                
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
                         'https://text.pollinations.ai/',
-                        json={
-                            'messages': [
-                                {
-                                    'role': 'system',
-                                    'content': 'You are an expert software architect. Analyze project requirements and provide structured technical specifications.'
-                                },
-                                {
-                                    'role': 'user',
-                                    'content': analysis_prompt
-                                }
-                            ],
-                            'model': 'openai'
-                        },
-                        timeout=aiohttp.ClientTimeout(total=15)
+                        json=payload,
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=20)
                     ) as response:
                         if response.status == 200:
                             result = await response.text()
+                            self.logger.info(f"AI analysis successful: {len(result)} characters")
                             return self._parse_ai_response(result, prompt)
+                        else:
+                            self.logger.warning(f"Pollinations API returned status {response.status}: {await response.text()}")
             
             except Exception as e:
                 self.logger.warning(f"AI analysis failed: {e}")
@@ -170,14 +189,21 @@ class ProjectAnalyzer:
                 json_str = ai_response[json_start:json_end]
                 data = json.loads(json_str)
                 
+                # Validate project type
+                project_type_str = data.get('type', 'web_application')
+                try:
+                    project_type = ProjectType(project_type_str)
+                except ValueError:
+                    project_type = ProjectType.WEB_APPLICATION
+                
                 return ProjectAnalysis(
                     name=data.get('name', 'AI Generated Project'),
                     description=original_prompt,
-                    project_type=ProjectType(data.get('type', 'web_application')),
+                    project_type=project_type,
                     language=data.get('language', 'python'),
                     components=data.get('components', []),
                     dependencies=data.get('dependencies', []),
-                    confidence=float(data.get('confidence', 0.8)),
+                    confidence=float(data.get('confidence', 0.9)),  # Higher confidence for AI analysis
                     estimated_complexity=data.get('complexity', 'medium'),
                     recommended_architecture=data.get('architecture', 'layered')
                 )
