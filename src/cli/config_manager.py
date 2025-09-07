@@ -32,9 +32,13 @@ class UserConfig:
     timeout: int = 300
     concurrent_clones: int = 3
     
-    # API settings
+    # API settings - Support for multiple providers
+    api_provider: str = "pollinations"  # pollinations, openai, anthropic, google
+    openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    google_api_key: Optional[str] = None
+    pollinations_api_key: Optional[str] = None  # Optional, free tier available
     github_token: Optional[str] = None
-    pollinations_api_key: Optional[str] = None
     
     # UI preferences
     use_rich: bool = True
@@ -130,24 +134,145 @@ class ConfigManager:
         return default_config
     
     def get_api_keys(self) -> Dict[str, Optional[str]]:
-        """Get API keys from configuration and environment."""
+        """Get API keys from configuration and environment variables."""
         
+        # Priority: User config > Environment variables
         api_keys = {
-            'github_token': self._config.github_token or os.getenv('GITHUB_TOKEN'),
-            'pollinations_api_key': self._config.pollinations_api_key or os.getenv('POLLINATIONS_API_KEY')
+            'openai_api_key': (
+                self._config.openai_api_key or 
+                os.getenv('OPENAI_API_KEY')
+            ),
+            'anthropic_api_key': (
+                self._config.anthropic_api_key or 
+                os.getenv('ANTHROPIC_API_KEY')
+            ),
+            'google_api_key': (
+                self._config.google_api_key or 
+                os.getenv('GOOGLE_API_KEY')
+            ),
+            'pollinations_api_key': (
+                self._config.pollinations_api_key or 
+                os.getenv('POLLINATIONS_API_KEY')
+            ),
+            'github_token': (
+                self._config.github_token or 
+                os.getenv('GITHUB_TOKEN')
+            )
         }
         
         return api_keys
     
-    def set_api_key(self, service: str, api_key: str):
-        """Set API key for a service."""
+    def get_preferred_api_provider(self) -> str:
+        """Get the preferred API provider based on configuration and available keys."""
         
-        if service == 'github':
-            self.update_config(github_token=api_key)
-        elif service == 'pollinations':
-            self.update_config(pollinations_api_key=api_key)
+        api_keys = self.get_api_keys()
+        preferred = self._config.api_provider.lower()
+        
+        # Check if preferred provider has API key (except Pollinations which is free)
+        if preferred == "pollinations":
+            return "pollinations"
+        elif preferred == "openai" and api_keys['openai_api_key']:
+            return "openai"
+        elif preferred == "anthropic" and api_keys['anthropic_api_key']:
+            return "anthropic"
+        elif preferred == "google" and api_keys['google_api_key']:
+            return "google"
+        
+        # Fallback logic: use any available API key
+        if api_keys['openai_api_key']:
+            return "openai"
+        elif api_keys['anthropic_api_key']:
+            return "anthropic"
+        elif api_keys['google_api_key']:
+            return "google"
         else:
-            self.logger.warning(f"Unknown service: {service}")
+            # Default to Pollinations (free)
+            return "pollinations"
+    
+    def set_api_key(self, provider: str, api_key: str):
+        """Set API key for a specific provider."""
+        
+        provider = provider.lower()
+        
+        if provider == 'openai':
+            self.update_config(openai_api_key=api_key)
+        elif provider == 'anthropic':
+            self.update_config(anthropic_api_key=api_key)
+        elif provider == 'google':
+            self.update_config(google_api_key=api_key)
+        elif provider == 'pollinations':
+            self.update_config(pollinations_api_key=api_key)
+        elif provider == 'github':
+            self.update_config(github_token=api_key)
+        else:
+            self.logger.warning(f"Unknown API provider: {provider}")
+    
+    def set_api_provider(self, provider: str):
+        """Set preferred API provider."""
+        
+        valid_providers = ['pollinations', 'openai', 'anthropic', 'google']
+        provider = provider.lower()
+        
+        if provider in valid_providers:
+            self.update_config(api_provider=provider)
+            self.logger.info(f"API provider set to: {provider}")
+        else:
+            self.logger.error(f"Invalid API provider: {provider}. Valid options: {valid_providers}")
+    
+    def get_api_status(self) -> Dict[str, Dict[str, Any]]:
+        """Get status of all API providers."""
+        
+        api_keys = self.get_api_keys()
+        status = {}
+        
+        providers = {
+            'pollinations': {
+                'name': 'Pollinations AI',
+                'free_tier': True,
+                'requires_key': False
+            },
+            'openai': {
+                'name': 'OpenAI GPT',
+                'free_tier': False,
+                'requires_key': True
+            },
+            'anthropic': {
+                'name': 'Anthropic Claude',
+                'free_tier': False,
+                'requires_key': True
+            },
+            'google': {
+                'name': 'Google Gemini',
+                'free_tier': True,
+                'requires_key': True
+            }
+        }
+        
+        for provider_id, provider_info in providers.items():
+            key_name = f"{provider_id}_api_key"
+            has_key = bool(api_keys.get(key_name))
+            
+            if provider_id == 'pollinations':
+                # Pollinations is always available (free tier)
+                available = True
+                status_msg = "Available (Free Tier)"
+            else:
+                available = has_key
+                if has_key:
+                    status_msg = "Available"
+                else:
+                    status_msg = "API Key Required"
+            
+            status[provider_id] = {
+                'name': provider_info['name'],
+                'available': available,
+                'has_key': has_key,
+                'free_tier': provider_info['free_tier'],
+                'requires_key': provider_info['requires_key'],
+                'status': status_msg
+            }
+        
+        return status
     
     def add_to_history(self, entry: Dict[str, Any]):
         """Add entry to command history."""
@@ -275,10 +400,16 @@ class ConfigManager:
         config_dict = asdict(self._config)
         
         # Hide sensitive information
-        if config_dict.get('github_token'):
-            config_dict['github_token'] = '***hidden***'
+        if config_dict.get('openai_api_key'):
+            config_dict['openai_api_key'] = '***hidden***'
+        if config_dict.get('anthropic_api_key'):
+            config_dict['anthropic_api_key'] = '***hidden***'
+        if config_dict.get('google_api_key'):
+            config_dict['google_api_key'] = '***hidden***'
         if config_dict.get('pollinations_api_key'):
             config_dict['pollinations_api_key'] = '***hidden***'
+        if config_dict.get('github_token'):
+            config_dict['github_token'] = '***hidden***'
         
         return config_dict
     
@@ -289,8 +420,11 @@ class ConfigManager:
             config_dict = asdict(self._config)
             
             # Remove sensitive data from export
-            config_dict.pop('github_token', None)
+            config_dict.pop('openai_api_key', None)
+            config_dict.pop('anthropic_api_key', None)
+            config_dict.pop('google_api_key', None)
             config_dict.pop('pollinations_api_key', None)
+            config_dict.pop('github_token', None)
             
             with open(export_path, 'w') as f:
                 json.dump(config_dict, f, indent=2)
@@ -363,6 +497,13 @@ def main():
         if 'token' in key or 'key' in key:
             value = '***hidden***' if value else None
         print(f"  {key}: {value}")
+    
+    # Test API status
+    print("\nAPI Status:")
+    api_status = config_manager.get_api_status()
+    for provider, status in api_status.items():
+        available = "✅" if status['available'] else "❌"
+        print(f"  {provider}: {available} {status['status']}")
     
     # Test validation
     print("\nValidation Issues:")
