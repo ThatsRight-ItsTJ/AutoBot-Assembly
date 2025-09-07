@@ -133,7 +133,7 @@ class AIIntegratedReporter:
         
         # Get AI analysis for executive summary
         ai_summary = await self._get_ai_analysis(
-            f"Provide an executive summary for a project called '{project_name}' with {file_count} files, {project_size} bytes, using {repo_count} repositories",
+            f"Executive summary for {project_name} project with {file_count} files",
             "executive_summary"
         )
         
@@ -158,32 +158,26 @@ class AIIntegratedReporter:
     async def _generate_ai_analysis(self, project_data: Dict, repositories: List[Dict]) -> str:
         """Generate comprehensive AI analysis section."""
         
-        # Prepare analysis context
-        context = {
-            'project': project_data,
-            'repositories': [{'name': r.get('name'), 'purpose': r.get('purpose')} for r in repositories]
-        }
-        
         # Get AI analysis from multiple perspectives
         analyses = []
         
         # Architecture Analysis
         arch_analysis = await self._get_ai_analysis(
-            f"Analyze the architecture of project '{project_data.get('name')}' with components: {', '.join(project_data.get('files', [])[:5])}",
+            f"Architecture analysis for {project_data.get('name')} project",
             "architecture"
         )
         analyses.append(f"**🏗️ Architecture Analysis:**\n{arch_analysis}")
         
         # Code Quality Analysis
         quality_analysis = await self._get_ai_analysis(
-            f"Assess the code quality and best practices for a {project_data.get('language', 'Python')} project with {len(project_data.get('files', []))} files",
+            f"Code quality assessment for {project_data.get('language', 'Python')} project",
             "quality"
         )
         analyses.append(f"**🔍 Code Quality Assessment:**\n{quality_analysis}")
         
         # Security Analysis
         security_analysis = await self._get_ai_analysis(
-            f"Evaluate security considerations for a {project_data.get('description', 'web application')} project",
+            f"Security analysis for {project_data.get('description', 'web application')}",
             "security"
         )
         analyses.append(f"**🔒 Security Analysis:**\n{security_analysis}")
@@ -326,7 +320,7 @@ No external repositories were integrated in this project."""
         
         # Get AI recommendations
         recommendations = await self._get_ai_analysis(
-            f"Provide specific recommendations for improving and deploying a {project_data.get('description', 'web application')} project",
+            f"Deployment recommendations for {project_data.get('description', 'web application')}",
             "recommendations"
         )
         
@@ -374,7 +368,7 @@ No external repositories were integrated in this project."""
     async def _get_ai_analysis(self, prompt: str, analysis_type: str) -> str:
         """Get AI analysis using available providers."""
         
-        # Try Pollinations AI first with API key
+        # Try Pollinations AI with simplified approach
         try:
             if aiohttp:
                 headers = {
@@ -383,19 +377,19 @@ No external repositories were integrated in this project."""
                     'User-Agent': 'AutoBot-Assembly/1.0'
                 }
                 
+                # Simplified payload matching debug success
                 payload = {
                     'messages': [
                         {
                             'role': 'system',
-                            'content': 'You are an expert software architect and code analyst. Provide detailed, actionable insights in a professional tone.'
+                            'content': 'You are a helpful software analyst.'
                         },
                         {
                             'role': 'user',
-                            'content': prompt
+                            'content': f"Provide a brief {analysis_type} analysis: {prompt}"
                         }
                     ],
-                    'model': 'openai',
-                    'seed': 42
+                    'model': 'openai'
                 }
                 
                 async with aiohttp.ClientSession() as session:
@@ -403,13 +397,13 @@ No external repositories were integrated in this project."""
                         'https://text.pollinations.ai/',
                         json=payload,
                         headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=15)
+                        timeout=aiohttp.ClientTimeout(total=10)
                     ) as response:
                         if response.status == 200:
                             result = await response.text()
-                            # Clean up the response and limit length
-                            cleaned_result = result.strip()
-                            return cleaned_result[:800] + "..." if len(cleaned_result) > 800 else cleaned_result
+                            # Clean up and return result
+                            cleaned_result = result.strip().replace('{"message": "', '').replace('"}', '')
+                            return cleaned_result[:400] + "..." if len(cleaned_result) > 400 else cleaned_result
                         else:
                             self.logger.warning(f"Pollinations API returned status {response.status}")
         except Exception as e:
