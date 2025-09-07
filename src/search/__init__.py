@@ -1,18 +1,18 @@
 """
-Tiered Search System
+Search Module
 
-Three-tier search strategy for discovering GitHub repositories:
-- Tier 1: Package ecosystem search (PyPI, NPM, Maven, etc.)
-- Tier 2: Curated collections (GitHub Topics, Awesome Lists)
-- Tier 3: Live GitHub discovery with AI-generated queries
+Multi-tier search system for discovering relevant repositories and packages.
 """
 
 from .tier1_packages import Tier1Search, PackageResult
-from .tier2_curated import Tier2Search, RepositoryResult
-from .tier3_discovery import Tier3Search, SearchResult
+from .tier2_curated import Tier2Search, CollectionResult
+from .tier3_discovery import Tier3Search, RepositoryInfo
 
 __all__ = [
-    'Tier1Search', 'PackageResult',
-    'Tier2Search', 'RepositoryResult', 
-    'Tier3Search', 'SearchResult'
+    'Tier1Search',
+    'PackageResult',
+    'Tier2Search', 
+    'CollectionResult',
+    'Tier3Search',
+    'RepositoryInfo'
 ]
