@@ -1,378 +1,341 @@
 """
 Tier 2: Curated Collections Search
 
-Discovers community-vetted implementations from GitHub Topics and Awesome Lists.
+Search through curated collections of high-quality repositories
+organized by use case, framework, and domain expertise.
 """
 
 import asyncio
 import logging
-import re
-from typing import Dict, List, Optional, Set
-from dataclasses import dataclass
-from datetime import datetime
-
+import json
 import aiohttp
-from github import Github
+from typing import List, Dict, Optional, Any
+from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
-class RepositoryResult:
+class CuratedCollection:
+    """Represents a curated collection of repositories."""
+    
     name: str
-    full_name: str
-    url: str
     description: str
-    stars: int
-    forks: int
-    language: str
-    topics: List[str]
-    last_updated: datetime
-    license: str
-    size: int
-    open_issues: int
-    quality_score: float
-    source: str  # 'github_topics' or 'awesome_lists'
+    category: str
+    repositories: List[str]  # GitHub repo URLs
+    maintainer: str
+    last_updated: str
+    tags: List[str]
+    quality_score: float = 0.0
+
+
+@dataclass
+class CollectionResult:
+    """Result from curated collection search."""
+    
+    collection: CuratedCollection
     relevance_score: float
+    matching_repos: List[str]
+    reason: str
 
 
 class Tier2Search:
-    """Search GitHub topics and awesome lists for curated components."""
+    """Curated collections search implementation."""
     
-    def __init__(self, github_token: Optional[str] = None):
-        self.github_client = Github(github_token) if github_token else Github()
+    def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.awesome_lists_cache = {}
         
-    async def search_curated(self, search_targets: Dict[str, List[str]], language: str) -> List[RepositoryResult]:
+        # Load curated collections
+        self.collections = self._load_curated_collections()
+        
+        # Category mappings
+        self.category_keywords = {
+            'web_frameworks': ['web', 'framework', 'api', 'server', 'http', 'rest'],
+            'data_science': ['data', 'analysis', 'machine learning', 'ai', 'ml', 'pandas', 'numpy'],
+            'cli_tools': ['cli', 'command line', 'terminal', 'script', 'automation'],
+            'mobile_development': ['mobile', 'android', 'ios', 'react native', 'flutter'],
+            'game_development': ['game', 'gaming', 'unity', 'pygame', 'graphics'],
+            'security': ['security', 'encryption', 'auth', 'authentication', 'vulnerability'],
+            'devops': ['docker', 'kubernetes', 'ci/cd', 'deployment', 'infrastructure'],
+            'testing': ['test', 'testing', 'unit test', 'integration', 'qa']
+        }
+    
+    def _load_curated_collections(self) -> List[CuratedCollection]:
+        """Load curated collections from various sources."""
+        
+        collections = []
+        
+        # Add built-in curated collections
+        collections.extend(self._get_builtin_collections())
+        
+        # TODO: Load from external sources (awesome lists, etc.)
+        
+        return collections
+    
+    def _get_builtin_collections(self) -> List[CuratedCollection]:
+        """Get built-in curated collections."""
+        
+        return [
+            CuratedCollection(
+                name="Python Web Frameworks",
+                description="Popular and well-maintained Python web frameworks",
+                category="web_frameworks",
+                repositories=[
+                    "https://github.com/pallets/flask",
+                    "https://github.com/django/django",
+                    "https://github.com/tiangolo/fastapi",
+                    "https://github.com/encode/starlette",
+                    "https://github.com/huge-success/sanic"
+                ],
+                maintainer="AutoBot Curators",
+                last_updated="2024-01-01",
+                tags=["python", "web", "framework", "api"],
+                quality_score=0.95
+            ),
+            
+            CuratedCollection(
+                name="JavaScript Frontend Libraries",
+                description="Essential JavaScript libraries for frontend development",
+                category="web_frameworks",
+                repositories=[
+                    "https://github.com/facebook/react",
+                    "https://github.com/vuejs/vue",
+                    "https://github.com/angular/angular",
+                    "https://github.com/sveltejs/svelte",
+                    "https://github.com/alpinejs/alpine"
+                ],
+                maintainer="AutoBot Curators",
+                last_updated="2024-01-01",
+                tags=["javascript", "frontend", "ui", "framework"],
+                quality_score=0.98
+            ),
+            
+            CuratedCollection(
+                name="Data Science Essentials",
+                description="Core libraries for data science and machine learning",
+                category="data_science",
+                repositories=[
+                    "https://github.com/pandas-dev/pandas",
+                    "https://github.com/numpy/numpy",
+                    "https://github.com/scikit-learn/scikit-learn",
+                    "https://github.com/matplotlib/matplotlib",
+                    "https://github.com/jupyter/notebook"
+                ],
+                maintainer="AutoBot Curators",
+                last_updated="2024-01-01",
+                tags=["python", "data", "science", "ml", "analysis"],
+                quality_score=0.97
+            ),
+            
+            CuratedCollection(
+                name="CLI Development Tools",
+                description="Tools and libraries for building command-line applications",
+                category="cli_tools",
+                repositories=[
+                    "https://github.com/pallets/click",
+                    "https://github.com/google/python-fire",
+                    "https://github.com/tiangolo/typer",
+                    "https://github.com/spf13/cobra",
+                    "https://github.com/urfave/cli"
+                ],
+                maintainer="AutoBot Curators",
+                last_updated="2024-01-01",
+                tags=["cli", "command", "terminal", "python", "go"],
+                quality_score=0.92
+            ),
+            
+            CuratedCollection(
+                name="Web Scraping Tools",
+                description="Libraries and tools for web scraping and data extraction",
+                category="data_science",
+                repositories=[
+                    "https://github.com/psf/requests",
+                    "https://github.com/scrapy/scrapy",
+                    "https://github.com/MechanicalSoup/MechanicalSoup",
+                    "https://github.com/codelucas/newspaper",
+                    "https://github.com/binux/pyspider"
+                ],
+                maintainer="AutoBot Curators",
+                last_updated="2024-01-01",
+                tags=["python", "scraping", "web", "data", "extraction"],
+                quality_score=0.89
+            ),
+            
+            CuratedCollection(
+                name="Testing Frameworks",
+                description="Popular testing frameworks across different languages",
+                category="testing",
+                repositories=[
+                    "https://github.com/pytest-dev/pytest",
+                    "https://github.com/facebook/jest",
+                    "https://github.com/rspec/rspec",
+                    "https://github.com/junit-team/junit5",
+                    "https://github.com/stretchr/testify"
+                ],
+                maintainer="AutoBot Curators",
+                last_updated="2024-01-01",
+                tags=["testing", "framework", "unit", "integration"],
+                quality_score=0.94
+            )
+        ]
+    
+    async def search_curated_collections(self, query: str, language: Optional[str] = None, max_results: int = 10) -> List[CollectionResult]:
         """
-        Search GitHub topics and awesome lists for curated repositories.
+        Search through curated collections for relevant repositories.
         
         Args:
-            search_targets: Dict mapping components to search keywords
-            language: Target programming language
+            query: Search query describing the project requirements
+            language: Programming language preference
+            max_results: Maximum number of results to return
             
         Returns:
-            List of RepositoryResult objects
+            List of relevant curated collections with matching repositories
         """
+        
+        self.logger.info(f"Searching curated collections for: {query}")
+        
+        query_lower = query.lower()
         results = []
         
-        # Search GitHub Topics
-        topics_results = await self._search_github_topics(search_targets, language)
-        results.extend(topics_results)
-        
-        # Search Awesome Lists
-        awesome_results = await self._search_awesome_lists(search_targets, language)
-        results.extend(awesome_results)
-        
-        # Deduplicate and rank results
-        unique_results = self._deduplicate_results(results)
-        ranked_results = self._rank_by_relevance(unique_results, search_targets)
-        
-        return ranked_results
-    
-    async def _search_github_topics(self, search_targets: Dict[str, List[str]], language: str) -> List[RepositoryResult]:
-        """Search GitHub repositories by topics."""
-        results = []
-        
-        for component, keywords in search_targets.items():
-            for keyword in keywords:
-                try:
-                    # Create search query
-                    query_parts = [
-                        f"topic:{keyword.replace(' ', '-')}",
-                        f"language:{language}",
-                        "stars:>20",
-                        "pushed:>2023-01-01"
-                    ]
-                    query = " ".join(query_parts)
-                    
-                    # Search repositories
-                    repositories = self.github_client.search_repositories(
-                        query=query,
-                        sort="stars",
-                        order="desc"
-                    )
-                    
-                    # Process results
-                    for repo in repositories[:10]:  # Limit to top 10 per keyword
-                        result = self._create_repository_result(repo, "github_topics", keyword)
-                        if result:
-                            results.append(result)
-                            
-                except Exception as e:
-                    self.logger.error(f"Error searching GitHub topics for {keyword}: {e}")
-                    continue
-        
-        return results
-    
-    async def _search_awesome_lists(self, search_targets: Dict[str, List[str]], language: str) -> List[RepositoryResult]:
-        """Search awesome lists for relevant repositories."""
-        results = []
-        
-        # Get relevant awesome lists
-        awesome_lists = await self._get_relevant_awesome_lists(language)
-        
-        for awesome_list in awesome_lists:
-            try:
-                # Get awesome list content
-                content = await self._get_awesome_list_content(awesome_list)
-                
-                # Extract repository URLs
-                repo_urls = self._extract_repository_urls(content)
-                
-                # Filter repositories by relevance to search targets
-                relevant_repos = self._filter_relevant_repositories(repo_urls, search_targets)
-                
-                # Get repository details
-                for repo_url in relevant_repos[:5]:  # Limit per awesome list
-                    try:
-                        repo = self.github_client.get_repo(self._extract_repo_name(repo_url))
-                        result = self._create_repository_result(repo, "awesome_lists", awesome_list)
-                        if result:
-                            results.append(result)
-                    except Exception as e:
-                        self.logger.error(f"Error getting repo details for {repo_url}: {e}")
-                        continue
-                        
-            except Exception as e:
-                self.logger.error(f"Error processing awesome list {awesome_list}: {e}")
-                continue
-        
-        return results
-    
-    async def _get_relevant_awesome_lists(self, language: str) -> List[str]:
-        """Get list of awesome lists relevant to the language."""
-        awesome_lists = {
-            'python': [
-                'vinta/awesome-python',
-                'kirang89/pycrumbs',
-                'svaksha/pythonidae'
-            ],
-            'javascript': [
-                'sorrycc/awesome-javascript',
-                'sindresorhus/awesome-nodejs',
-                'enaqx/awesome-react'
-            ],
-            'java': [
-                'akullpp/awesome-java',
-                'Vedenin/useful-java-links'
-            ],
-            'go': [
-                'avelino/awesome-go',
-                'golang/go/wiki'
-            ],
-            'rust': [
-                'rust-unofficial/awesome-rust'
-            ],
-            'cpp': [
-                'fffaraz/awesome-cpp'
-            ]
-        }
-        
-        return awesome_lists.get(language.lower(), [])
-    
-    async def _get_awesome_list_content(self, awesome_list: str) -> str:
-        """Get the content of an awesome list README."""
-        try:
-            repo = self.github_client.get_repo(awesome_list)
-            readme = repo.get_readme()
-            return readme.decoded_content.decode('utf-8')
-        except Exception as e:
-            self.logger.error(f"Error getting awesome list content for {awesome_list}: {e}")
-            return ""
-    
-    def _extract_repository_urls(self, content: str) -> List[str]:
-        """Extract GitHub repository URLs from awesome list content."""
-        # Regex pattern to match GitHub repository URLs
-        pattern = r'https://github\.com/([^/\s]+/[^/\s\)]+)'
-        matches = re.findall(pattern, content)
-        
-        # Clean and deduplicate URLs
-        urls = []
-        seen = set()
-        
-        for match in matches:
-            # Remove trailing punctuation and whitespace
-            clean_match = re.sub(r'[^\w\-/].*$', '', match)
-            if clean_match not in seen and len(clean_match.split('/')) == 2:
-                seen.add(clean_match)
-                urls.append(f"https://github.com/{clean_match}")
-        
-        return urls
-    
-    def _filter_relevant_repositories(self, repo_urls: List[str], search_targets: Dict[str, List[str]]) -> List[str]:
-        """Filter repositories based on relevance to search targets."""
-        relevant_repos = []
-        
-        # Create set of all search keywords
-        all_keywords = set()
-        for keywords in search_targets.values():
-            all_keywords.update(keyword.lower() for keyword in keywords)
-        
-        for url in repo_urls:
-            repo_name = url.split('/')[-1].lower()
-            repo_owner = url.split('/')[-2].lower()
+        for collection in self.collections:
+            relevance_score = self._calculate_collection_relevance(collection, query_lower, language)
             
-            # Check if repository name or owner contains any keywords
-            for keyword in all_keywords:
-                if keyword in repo_name or keyword in repo_owner:
-                    relevant_repos.append(url)
+            if relevance_score > 0.3:  # Minimum relevance threshold
+                matching_repos = self._get_matching_repositories(collection, query_lower)
+                
+                result = CollectionResult(
+                    collection=collection,
+                    relevance_score=relevance_score,
+                    matching_repos=matching_repos,
+                    reason=self._generate_match_reason(collection, query_lower)
+                )
+                
+                results.append(result)
+        
+        # Sort by relevance score and quality
+        results.sort(key=lambda x: (x.relevance_score * x.collection.quality_score), reverse=True)
+        
+        self.logger.info(f"Found {len(results)} relevant collections")
+        
+        return results[:max_results]
+    
+    def _calculate_collection_relevance(self, collection: CuratedCollection, query: str, language: Optional[str]) -> float:
+        """Calculate how relevant a collection is to the query."""
+        
+        score = 0.0
+        
+        # Check name and description
+        if any(word in collection.name.lower() for word in query.split()):
+            score += 0.4
+        
+        if any(word in collection.description.lower() for word in query.split()):
+            score += 0.3
+        
+        # Check tags
+        query_words = set(query.split())
+        tag_words = set(' '.join(collection.tags).lower().split())
+        
+        if query_words & tag_words:
+            score += 0.3
+        
+        # Check category keywords
+        for category, keywords in self.category_keywords.items():
+            if collection.category == category:
+                if any(keyword in query for keyword in keywords):
+                    score += 0.2
                     break
         
-        return relevant_repos
-    
-    def _extract_repo_name(self, repo_url: str) -> str:
-        """Extract owner/repo format from GitHub URL."""
-        parts = repo_url.replace('https://github.com/', '').split('/')
-        return f"{parts[0]}/{parts[1]}"
-    
-    def _create_repository_result(self, repo, source: str, search_term: str) -> Optional[RepositoryResult]:
-        """Create RepositoryResult from GitHub repository object."""
-        try:
-            return RepositoryResult(
-                name=repo.name,
-                full_name=repo.full_name,
-                url=repo.html_url,
-                description=repo.description or "",
-                stars=repo.stargazers_count,
-                forks=repo.forks_count,
-                language=repo.language or "Unknown",
-                topics=repo.get_topics(),
-                last_updated=repo.updated_at,
-                license=repo.license.name if repo.license else "Unknown",
-                size=repo.size,
-                open_issues=repo.open_issues_count,
-                quality_score=self._calculate_quality_score(repo),
-                source=source,
-                relevance_score=self._calculate_relevance_score(repo, search_term)
-            )
-        except Exception as e:
-            self.logger.error(f"Error creating repository result: {e}")
-            return None
-    
-    def _calculate_quality_score(self, repo) -> float:
-        """Calculate quality score for repository."""
-        score = 0.0
-        
-        # Stars factor (0-0.4)
-        stars = repo.stargazers_count
-        if stars > 10000:
-            score += 0.4
-        elif stars > 1000:
-            score += 0.3
-        elif stars > 100:
-            score += 0.2
-        elif stars > 20:
-            score += 0.1
-        
-        # Activity factor (0-0.2)
-        if repo.updated_at:
-            days_old = (datetime.now() - repo.updated_at.replace(tzinfo=None)).days
-            if days_old < 30:
-                score += 0.2
-            elif days_old < 90:
-                score += 0.15
-            elif days_old < 365:
-                score += 0.1
-        
-        # Issues factor (0-0.1)
-        if repo.open_issues_count < 10:
-            score += 0.1
-        elif repo.open_issues_count < 50:
-            score += 0.05
-        
-        # License factor (0-0.1)
-        if repo.license:
-            score += 0.1
-        
-        # Documentation factor (0-0.1)
-        if repo.description and len(repo.description) > 20:
-            score += 0.05
-        if repo.has_wiki or repo.has_pages:
-            score += 0.05
-        
-        # Fork ratio factor (0-0.1)
-        if repo.stargazers_count > 0:
-            fork_ratio = repo.forks_count / repo.stargazers_count
-            if fork_ratio < 0.3:  # Good star-to-fork ratio
-                score += 0.1
-        
-        return min(1.0, score)
-    
-    def _calculate_relevance_score(self, repo, search_term: str) -> float:
-        """Calculate relevance score based on search term match."""
-        score = 0.0
-        search_lower = search_term.lower()
-        
-        # Name match (0-0.4)
-        if search_lower in repo.name.lower():
-            score += 0.4
-        elif any(word in repo.name.lower() for word in search_lower.split()):
+        # Language preference bonus
+        if language and language.lower() in ' '.join(collection.tags).lower():
             score += 0.2
         
-        # Description match (0-0.3)
-        if repo.description:
-            desc_lower = repo.description.lower()
-            if search_lower in desc_lower:
-                score += 0.3
-            elif any(word in desc_lower for word in search_lower.split()):
-                score += 0.15
-        
-        # Topics match (0-0.3)
-        topics = [topic.lower() for topic in repo.get_topics()]
-        if search_lower.replace(' ', '-') in topics:
-            score += 0.3
-        elif any(word in ' '.join(topics) for word in search_lower.split()):
-            score += 0.15
-        
-        return min(1.0, score)
+        return min(score, 1.0)
     
-    def _deduplicate_results(self, results: List[RepositoryResult]) -> List[RepositoryResult]:
-        """Remove duplicate repositories."""
-        seen = set()
-        unique_results = []
+    def _get_matching_repositories(self, collection: CuratedCollection, query: str) -> List[str]:
+        """Get repositories from the collection that match the query."""
         
-        for result in results:
-            if result.full_name not in seen:
-                seen.add(result.full_name)
-                unique_results.append(result)
-        
-        return unique_results
+        # For now, return all repositories in relevant collections
+        # TODO: Implement more sophisticated repository filtering
+        return collection.repositories
     
-    def _rank_by_relevance(self, results: List[RepositoryResult], search_targets: Dict[str, List[str]]) -> List[RepositoryResult]:
-        """Rank results by combined quality and relevance scores."""
-        def combined_score(result):
-            return (result.quality_score * 0.6) + (result.relevance_score * 0.4)
+    def _generate_match_reason(self, collection: CuratedCollection, query: str) -> str:
+        """Generate a reason why this collection matches the query."""
         
-        return sorted(results, key=combined_score, reverse=True)
+        reasons = []
+        
+        # Check what matched
+        if any(word in collection.name.lower() for word in query.split()):
+            reasons.append(f"Collection name matches '{collection.name}'")
+        
+        if any(word in collection.description.lower() for word in query.split()):
+            reasons.append("Description contains relevant keywords")
+        
+        query_words = set(query.split())
+        tag_words = set(' '.join(collection.tags).lower().split())
+        
+        if query_words & tag_words:
+            matching_tags = query_words & tag_words
+            reasons.append(f"Tags match: {', '.join(matching_tags)}")
+        
+        if not reasons:
+            reasons.append("Category relevance")
+        
+        return "; ".join(reasons)
+    
+    async def get_collection_details(self, collection_name: str) -> Optional[CuratedCollection]:
+        """Get detailed information about a specific collection."""
+        
+        for collection in self.collections:
+            if collection.name.lower() == collection_name.lower():
+                return collection
+        
+        return None
+    
+    def get_available_categories(self) -> List[str]:
+        """Get list of available collection categories."""
+        
+        return list(set(collection.category for collection in self.collections))
+    
+    async def get_collections_by_category(self, category: str) -> List[CuratedCollection]:
+        """Get all collections in a specific category."""
+        
+        return [
+            collection for collection in self.collections
+            if collection.category.lower() == category.lower()
+        ]
 
 
-# Example usage
-async def main():
-    import os
+# Example usage and testing
+async def test_tier2_search():
+    """Test the Tier 2 curated collections search."""
     
-    # Initialize with GitHub token if available
-    github_token = os.getenv('GITHUB_TOKEN')
-    searcher = Tier2Search(github_token)
+    tier2 = Tier2Search()
     
-    # Test search targets
-    search_targets = {
-        'authentication': ['jwt', 'oauth', 'auth', 'authentication'],
-        'database': ['database', 'orm', 'sql', 'postgresql'],
-        'api': ['api', 'rest', 'fastapi', 'flask']
-    }
+    test_queries = [
+        ("web framework python", "python"),
+        ("machine learning data analysis", "python"),
+        ("cli tool development", None),
+        ("web scraping", "python"),
+        ("testing framework", "javascript")
+    ]
     
-    print("Searching curated collections...")
-    results = await searcher.search_curated(search_targets, 'python')
-    
-    print(f"\nFound {len(results)} repositories:")
-    for result in results[:10]:  # Show top 10
-        print(f"\n{result.name} ({result.full_name})")
-        print(f"  Stars: {result.stars}, Quality: {result.quality_score:.2f}, Relevance: {result.relevance_score:.2f}")
-        print(f"  Description: {result.description[:100]}...")
-        print(f"  Source: {result.source}")
-        print(f"  Topics: {', '.join(result.topics[:5])}")
+    for query, language in test_queries:
+        print(f"\n=== Searching: '{query}' (Language: {language}) ===")
+        
+        results = await tier2.search_curated_collections(query, language, max_results=3)
+        
+        for i, result in enumerate(results, 1):
+            print(f"\n{i}. {result.collection.name}")
+            print(f"   Category: {result.collection.category}")
+            print(f"   Relevance: {result.relevance_score:.2f}")
+            print(f"   Quality: {result.collection.quality_score:.2f}")
+            print(f"   Repositories: {len(result.matching_repos)}")
+            print(f"   Reason: {result.reason}")
+            
+            # Show first few repositories
+            for repo in result.matching_repos[:2]:
+                repo_name = repo.split('/')[-1]
+                print(f"   - {repo_name}")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
+    asyncio.run(test_tier2_search())

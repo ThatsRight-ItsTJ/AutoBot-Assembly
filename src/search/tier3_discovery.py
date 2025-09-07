@@ -1,412 +1,457 @@
 """
-Tier 3: Live GitHub Discovery
+Tier 3: AI-Driven GitHub Discovery
 
-AI-driven GitHub search for comprehensive coverage including hidden gems.
+Advanced repository discovery using AI analysis of project requirements
+and intelligent GitHub API searches with quality filtering.
 """
 
 import asyncio
 import logging
-from typing import Dict, List, Optional, Set, Tuple
+import json
+import aiohttp
+import os
+from typing import List, Dict, Optional, Any, Set
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-
-import aiohttp
-from github import Github
+import re
 
 
 @dataclass
-class SearchResult:
-    repository: str
+class RepositoryInfo:
+    """Information about a discovered repository."""
+    
+    name: str
     full_name: str
-    url: str
     description: str
+    url: str
+    clone_url: str
+    language: str
     stars: int
     forks: int
-    language: str
-    last_updated: datetime
-    license: str
-    file_matches: List[str]
+    last_updated: str
+    topics: List[str]
+    license: Optional[str]
+    size: int
+    open_issues: int
+    has_wiki: bool
+    has_pages: bool
+    archived: bool
+    quality_score: float = 0.0
+    relevance_score: float = 0.0
+
+
+@dataclass
+class DiscoveryResult:
+    """Result from AI-driven repository discovery."""
+    
+    repositories: List[RepositoryInfo]
     search_query: str
-    discovery_score: float
-    gap_filling_potential: float
-
-
-class AIQueryGenerator:
-    """Generate AI-powered search queries for gap analysis."""
-    
-    def __init__(self, pollinations_endpoint: str = "https://text.pollinations.ai/openai"):
-        self.pollinations_endpoint = pollinations_endpoint
-        self.logger = logging.getLogger(__name__)
-    
-    async def generate_gap_filling_queries(self, gaps: Dict[str, List[str]], language: str) -> List[str]:
-        """Generate targeted search queries to fill coverage gaps."""
-        prompt = self._create_query_generation_prompt(gaps, language)
-        
-        try:
-            response = await self._call_pollinations(prompt)
-            queries = self._parse_query_response(response)
-            return queries
-        except Exception as e:
-            self.logger.error(f"Error generating queries: {e}")
-            return self._generate_fallback_queries(gaps, language)
-    
-    def _create_query_generation_prompt(self, gaps: Dict[str, List[str]], language: str) -> str:
-        """Create prompt for AI query generation."""
-        gaps_text = "\n".join([f"- {component}: {', '.join(missing)}" for component, missing in gaps.items()])
-        
-        return f"""
-        Generate GitHub search queries to find repositories that fill these gaps:
-        
-        Missing Components:
-        {gaps_text}
-        
-        Target Language: {language}
-        
-        Create 5-8 specific GitHub search queries that would find repositories containing these missing components.
-        Focus on:
-        1. File-level searches (filename: patterns)
-        2. Code pattern searches (specific function/class names)
-        3. Implementation-specific searches
-        4. Integration-focused searches
-        
-        Return as JSON array of strings:
-        ["query1", "query2", "query3", ...]
-        
-        Example queries:
-        - "filename:auth.py jwt OR oauth language:python stars:>10"
-        - "path:utils/ 'password hash' language:python"
-        - "'class Authentication' language:python size:>1000"
-        - "fastapi jwt middleware language:python"
-        """
-    
-    async def _call_pollinations(self, prompt: str) -> str:
-        """Make API call to Pollinations AI."""
-        payload = {
-            "model": "openai",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a GitHub search expert. Return only valid JSON arrays of search queries."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            "jsonMode": True
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self.pollinations_endpoint,
-                json=payload,
-                headers={"Content-Type": "application/json"}
-            ) as response:
-                if response.status == 200:
-                    return await response.text()
-                else:
-                    raise Exception(f"API call failed with status {response.status}")
-    
-    def _parse_query_response(self, response: str) -> List[str]:
-        """Parse AI response into search queries."""
-        try:
-            import json
-            queries = json.loads(response)
-            if isinstance(queries, list):
-                return [str(q) for q in queries if q]
-            return []
-        except Exception as e:
-            self.logger.error(f"Error parsing query response: {e}")
-            return []
-    
-    def _generate_fallback_queries(self, gaps: Dict[str, List[str]], language: str) -> List[str]:
-        """Generate fallback queries when AI fails."""
-        queries = []
-        
-        for component, missing_items in gaps.items():
-            for item in missing_items[:2]:  # Limit to avoid too many queries
-                # Basic keyword search
-                queries.append(f"{item} {component} language:{language} stars:>5")
-                
-                # File-level search
-                if language == 'python':
-                    queries.append(f"filename:{item}.py language:python")
-                elif language == 'javascript':
-                    queries.append(f"filename:{item}.js language:javascript")
-                elif language == 'java':
-                    queries.append(f"filename:{item.title()}.java language:java")
-        
-        return queries[:8]  # Limit total queries
+    total_found: int
+    search_strategy: str
+    quality_threshold: float
 
 
 class Tier3Search:
-    """AI-driven GitHub search for comprehensive coverage."""
+    """AI-driven GitHub repository discovery."""
     
-    def __init__(self, github_token: Optional[str] = None, pollinations_endpoint: str = "https://text.pollinations.ai/openai"):
-        self.github_client = Github(github_token) if github_token else Github()
-        self.query_generator = AIQueryGenerator(pollinations_endpoint)
+    def __init__(self, github_token: Optional[str] = None):
         self.logger = logging.getLogger(__name__)
+        
+        # GitHub API configuration
+        self.github_token = github_token or os.getenv('GITHUB_TOKEN')
+        self.base_url = "https://api.github.com"
+        
+        # Quality thresholds
+        self.min_stars = 10
+        self.min_quality_score = 0.4
+        self.max_age_days = 365 * 3  # 3 years
+        
+        # Search strategies
+        self.search_strategies = [
+            'keyword_search',
+            'topic_search',
+            'language_specific',
+            'trending_search',
+            'awesome_lists'
+        ]
     
-    async def comprehensive_search(self, 
-                                 search_targets: Dict[str, List[str]], 
-                                 language: str,
-                                 tier1_results: List = None, 
-                                 tier2_results: List = None) -> List[SearchResult]:
+    async def discover_repositories(self, query: str, language: Optional[str] = None, 
+                                  max_results: int = 20, quality_threshold: float = 0.4) -> List[RepositoryInfo]:
         """
-        AI-driven GitHub search for comprehensive coverage.
+        Discover repositories using AI-driven search strategies.
         
         Args:
-            search_targets: Dict mapping components to search keywords
-            language: Target programming language
-            tier1_results: Results from Tier 1 search (for gap analysis)
-            tier2_results: Results from Tier 2 search (for gap analysis)
+            query: Project description or requirements
+            language: Programming language preference
+            max_results: Maximum number of repositories to return
+            quality_threshold: Minimum quality score threshold
             
         Returns:
-            List of SearchResult objects
+            List of discovered repositories with quality scores
         """
-        # Analyze coverage gaps from previous tiers
-        gaps = self._analyze_coverage_gaps(search_targets, tier1_results or [], tier2_results or [])
         
-        # Generate targeted search queries
-        search_queries = await self.query_generator.generate_gap_filling_queries(gaps, language)
+        self.logger.info(f"Discovering repositories for: {query}")
         
-        # Add strategic searches
-        strategic_queries = self._generate_strategic_queries(search_targets, language)
-        search_queries.extend(strategic_queries)
+        all_repositories = []
         
-        # Execute searches
-        results = []
-        for query in search_queries:
+        # Generate search queries using different strategies
+        search_queries = self._generate_search_queries(query, language)
+        
+        for search_query in search_queries:
             try:
-                query_results = await self._execute_github_search(query, language)
-                results.extend(query_results)
+                repos = await self._search_github_repositories(search_query, max_results)
+                all_repositories.extend(repos)
                 
-                # Rate limiting - pause between searches
-                await asyncio.sleep(1)
+                # Add delay to respect rate limits
+                await asyncio.sleep(0.5)
                 
             except Exception as e:
-                self.logger.error(f"Error executing search query '{query}': {e}")
-                continue
+                self.logger.error(f"Search failed for query '{search_query}': {e}")
         
-        # Filter and rank results
-        filtered_results = self._filter_and_rank(results, search_targets)
-        
-        return filtered_results
-    
-    def _analyze_coverage_gaps(self, search_targets: Dict[str, List[str]], 
-                             tier1_results: List, tier2_results: List) -> Dict[str, List[str]]:
-        """Identify gaps in coverage from previous tiers."""
-        gaps = {}
-        
-        # Get all found components from previous tiers
-        found_keywords = set()
-        
-        # Extract keywords from tier1 results
-        for result in tier1_results:
-            if hasattr(result, 'name'):
-                found_keywords.update(result.name.lower().split())
-            if hasattr(result, 'description'):
-                found_keywords.update(result.description.lower().split())
-        
-        # Extract keywords from tier2 results
-        for result in tier2_results:
-            if hasattr(result, 'name'):
-                found_keywords.update(result.name.lower().split())
-            if hasattr(result, 'description'):
-                found_keywords.update(result.description.lower().split())
-            if hasattr(result, 'topics'):
-                found_keywords.update([topic.lower() for topic in result.topics])
-        
-        # Identify missing keywords for each component
-        for component, keywords in search_targets.items():
-            missing = []
-            for keyword in keywords:
-                keyword_words = keyword.lower().split()
-                if not any(word in found_keywords for word in keyword_words):
-                    missing.append(keyword)
-            
-            if missing:
-                gaps[component] = missing
-        
-        return gaps
-    
-    def _generate_strategic_queries(self, search_targets: Dict[str, List[str]], language: str) -> List[str]:
-        """Generate strategic search queries based on patterns."""
-        queries = []
-        
-        for component, keywords in search_targets.items():
-            for keyword in keywords[:2]:  # Limit to avoid too many queries
-                # File-level search
-                if language == 'python':
-                    filename = f"{keyword.replace(' ', '_')}.py"
-                    queries.append(f"filename:{filename} language:python stars:>5")
-                elif language == 'javascript':
-                    filename = f"{keyword.replace(' ', '-')}.js"
-                    queries.append(f"filename:{filename} language:javascript stars:>5")
-                
-                # Pattern search
-                queries.append(f'"{keyword}" in:file language:{language} size:>500')
-                
-                # Implementation search with class patterns
-                if language == 'python':
-                    class_name = keyword.replace(' ', '').title()
-                    queries.append(f'"class {class_name}" language:python')
-                elif language == 'java':
-                    class_name = keyword.replace(' ', '').title()
-                    queries.append(f'"class {class_name}" language:java')
-        
-        return queries
-    
-    async def _execute_github_search(self, query: str, language: str) -> List[SearchResult]:
-        """Execute a single GitHub search query."""
-        results = []
-        
-        try:
-            # Add language filter if not already present
-            if f"language:{language}" not in query:
-                query += f" language:{language}"
-            
-            # Search repositories
-            repositories = self.github_client.search_repositories(
-                query=query,
-                sort='stars',
-                order='desc'
-            )
-            
-            # Process results (limit to top 20 per query)
-            for repo in repositories[:20]:
-                try:
-                    result = SearchResult(
-                        repository=repo.name,
-                        full_name=repo.full_name,
-                        url=repo.html_url,
-                        description=repo.description or "",
-                        stars=repo.stargazers_count,
-                        forks=repo.forks_count,
-                        language=repo.language or language,
-                        last_updated=repo.updated_at,
-                        license=repo.license.name if repo.license else "Unknown",
-                        file_matches=[],  # Simplified for now
-                        search_query=query,
-                        discovery_score=self._calculate_discovery_score(repo, query),
-                        gap_filling_potential=self._calculate_gap_filling_potential(repo, query)
-                    )
-                    
-                    results.append(result)
-                    
-                except Exception as e:
-                    self.logger.error(f"Error processing repository {repo.full_name}: {e}")
-                    continue
-                    
-        except Exception as e:
-            self.logger.error(f"Error executing GitHub search: {e}")
-        
-        return results
-    
-    def _calculate_discovery_score(self, repo, query: str) -> float:
-        """Calculate discovery score based on repository characteristics."""
-        score = 0.0
-        
-        # Stars factor (0-0.3)
-        stars = repo.stargazers_count
-        if stars > 1000:
-            score += 0.3
-        elif stars > 100:
-            score += 0.2
-        elif stars > 10:
-            score += 0.1
-        
-        # Activity factor (0-0.2)
-        if repo.updated_at:
-            days_old = (datetime.now() - repo.updated_at.replace(tzinfo=None)).days
-            if days_old < 90:
-                score += 0.2
-            elif days_old < 365:
-                score += 0.1
-        
-        # Size factor (0-0.2) - prefer medium-sized repos
-        size_kb = repo.size
-        if 100 < size_kb < 10000:  # 100KB to 10MB
-            score += 0.2
-        elif 10 < size_kb < 100000:  # 10KB to 100MB
-            score += 0.1
-        
-        # License factor (0-0.1)
-        if repo.license:
-            score += 0.1
-        
-        # Query relevance factor (0-0.2)
-        query_words = query.lower().split()
-        repo_text = f"{repo.name} {repo.description or ''}".lower()
-        
-        matching_words = sum(1 for word in query_words if word in repo_text)
-        if matching_words > 0:
-            score += min(0.2, matching_words * 0.05)
-        
-        return min(1.0, score)
-    
-    def _calculate_gap_filling_potential(self, repo, query: str) -> float:
-        """Calculate how well this repository fills identified gaps."""
-        score = 0.5  # Base score
-        
-        # Query specificity bonus
-        if 'filename:' in query:
-            score += 0.2
-        if 'in:file' in query:
-            score += 0.15
-        if '"' in query:  # Exact phrase search
-            score += 0.1
-        
-        # Repository characteristics
-        if repo.stargazers_count > 50:
-            score += 0.1
-        if repo.forks_count > 10:
-            score += 0.05
-        
-        return min(1.0, score)
-    
-    def _filter_and_rank(self, results: List[SearchResult], search_targets: Dict[str, List[str]]) -> List[SearchResult]:
-        """Filter and rank results by combined scores."""
         # Remove duplicates
-        seen = set()
-        unique_results = []
+        unique_repos = self._deduplicate_repositories(all_repositories)
         
-        for result in results:
-            if result.full_name not in seen:
-                seen.add(result.full_name)
-                unique_results.append(result)
+        # Calculate quality and relevance scores
+        scored_repos = []
+        for repo in unique_repos:
+            quality_score = self._calculate_quality_score(repo)
+            relevance_score = self._calculate_relevance_score(repo, query, language)
+            
+            repo.quality_score = quality_score
+            repo.relevance_score = relevance_score
+            
+            if quality_score >= quality_threshold:
+                scored_repos.append(repo)
         
         # Sort by combined score
-        def combined_score(result):
-            return (result.discovery_score * 0.6) + (result.gap_filling_potential * 0.4)
+        scored_repos.sort(key=lambda x: (x.quality_score * x.relevance_score), reverse=True)
         
-        return sorted(unique_results, key=combined_score, reverse=True)
+        self.logger.info(f"Discovered {len(scored_repos)} quality repositories")
+        
+        return scored_repos[:max_results]
+    
+    def _generate_search_queries(self, query: str, language: Optional[str]) -> List[str]:
+        """Generate multiple search queries from the original query."""
+        
+        queries = []
+        
+        # Extract keywords from query
+        keywords = self._extract_keywords(query)
+        
+        # Basic keyword search
+        queries.append(' '.join(keywords[:3]))
+        
+        # Language-specific search
+        if language:
+            queries.append(f"{' '.join(keywords[:2])} language:{language}")
+            queries.append(f"{language} {' '.join(keywords[:2])}")
+        
+        # Topic-based searches
+        topics = self._extract_topics(query)
+        for topic in topics[:2]:
+            queries.append(f"topic:{topic}")
+        
+        # Framework/library specific
+        frameworks = self._extract_frameworks(query)
+        for framework in frameworks:
+            queries.append(f"{framework} {' '.join(keywords[:2])}")
+        
+        # Use case specific
+        use_cases = self._extract_use_cases(query)
+        for use_case in use_cases:
+            queries.append(use_case)
+        
+        return queries[:8]  # Limit to avoid rate limits
+    
+    def _extract_keywords(self, query: str) -> List[str]:
+        """Extract relevant keywords from the query."""
+        
+        # Remove common stop words
+        stop_words = {
+            'create', 'build', 'make', 'develop', 'implement', 'design',
+            'a', 'an', 'the', 'for', 'with', 'using', 'that', 'this',
+            'and', 'or', 'but', 'in', 'on', 'at', 'to', 'from'
+        }
+        
+        words = re.findall(r'\b[a-zA-Z]{3,}\b', query.lower())
+        keywords = [word for word in words if word not in stop_words]
+        
+        return keywords
+    
+    def _extract_topics(self, query: str) -> List[str]:
+        """Extract GitHub topics from the query."""
+        
+        topic_mappings = {
+            'web': ['web', 'webapp', 'website'],
+            'api': ['api', 'rest', 'graphql'],
+            'cli': ['cli', 'command-line'],
+            'scraping': ['web-scraping', 'scraper'],
+            'machine-learning': ['machine-learning', 'ml', 'ai'],
+            'data-science': ['data-science', 'data-analysis'],
+            'framework': ['framework'],
+            'library': ['library'],
+            'tool': ['tool', 'utility'],
+            'game': ['game', 'gaming'],
+            'mobile': ['mobile', 'android', 'ios'],
+            'desktop': ['desktop', 'gui']
+        }
+        
+        query_lower = query.lower()
+        topics = []
+        
+        for topic, keywords in topic_mappings.items():
+            if any(keyword in query_lower for keyword in keywords):
+                topics.append(topic)
+        
+        return topics
+    
+    def _extract_frameworks(self, query: str) -> List[str]:
+        """Extract framework names from the query."""
+        
+        frameworks = [
+            'flask', 'django', 'fastapi', 'express', 'react', 'vue',
+            'angular', 'spring', 'rails', 'laravel', 'symfony',
+            'tensorflow', 'pytorch', 'scikit-learn', 'pandas',
+            'numpy', 'matplotlib', 'opencv', 'requests', 'scrapy'
+        ]
+        
+        query_lower = query.lower()
+        found_frameworks = []
+        
+        for framework in frameworks:
+            if framework in query_lower:
+                found_frameworks.append(framework)
+        
+        return found_frameworks
+    
+    def _extract_use_cases(self, query: str) -> List[str]:
+        """Extract use case patterns from the query."""
+        
+        use_case_patterns = {
+            'web scraper': ['scraper', 'scraping', 'crawler'],
+            'rest api': ['api', 'rest', 'backend'],
+            'web app': ['web app', 'webapp', 'website'],
+            'cli tool': ['cli', 'command line', 'terminal'],
+            'data analysis': ['data analysis', 'analytics'],
+            'machine learning': ['machine learning', 'ml', 'ai'],
+            'game': ['game', 'gaming'],
+            'mobile app': ['mobile', 'android', 'ios'],
+            'desktop app': ['desktop', 'gui']
+        }
+        
+        query_lower = query.lower()
+        use_cases = []
+        
+        for use_case, patterns in use_case_patterns.items():
+            if any(pattern in query_lower for pattern in patterns):
+                use_cases.append(use_case)
+        
+        return use_cases
+    
+    async def _search_github_repositories(self, query: str, max_results: int) -> List[RepositoryInfo]:
+        """Search GitHub repositories using the API."""
+        
+        if not self.github_token:
+            self.logger.warning("No GitHub token provided, using unauthenticated requests")
+        
+        headers = {
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'AutoBot-Assembly-System'
+        }
+        
+        if self.github_token:
+            headers['Authorization'] = f'token {self.github_token}'
+        
+        # Build search URL
+        search_url = f"{self.base_url}/search/repositories"
+        params = {
+            'q': query,
+            'sort': 'stars',
+            'order': 'desc',
+            'per_page': min(max_results, 100)
+        }
+        
+        repositories = []
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(search_url, headers=headers, params=params) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        for item in data.get('items', []):
+                            repo_info = self._parse_repository_data(item)
+                            if repo_info:
+                                repositories.append(repo_info)
+                    
+                    elif response.status == 403:
+                        self.logger.warning("GitHub API rate limit exceeded")
+                    else:
+                        self.logger.error(f"GitHub API error: {response.status}")
+        
+        except Exception as e:
+            self.logger.error(f"Error searching GitHub: {e}")
+        
+        return repositories
+    
+    def _parse_repository_data(self, item: Dict[str, Any]) -> Optional[RepositoryInfo]:
+        """Parse repository data from GitHub API response."""
+        
+        try:
+            # Skip archived repositories
+            if item.get('archived', False):
+                return None
+            
+            # Skip repositories that are too old
+            updated_at = datetime.fromisoformat(item['updated_at'].replace('Z', '+00:00'))
+            if (datetime.now().astimezone() - updated_at).days > self.max_age_days:
+                return None
+            
+            # Skip repositories with too few stars
+            if item.get('stargazers_count', 0) < self.min_stars:
+                return None
+            
+            return RepositoryInfo(
+                name=item['name'],
+                full_name=item['full_name'],
+                description=item.get('description', ''),
+                url=item['html_url'],
+                clone_url=item['clone_url'],
+                language=item.get('language', ''),
+                stars=item.get('stargazers_count', 0),
+                forks=item.get('forks_count', 0),
+                last_updated=item['updated_at'],
+                topics=item.get('topics', []),
+                license=item.get('license', {}).get('name') if item.get('license') else None,
+                size=item.get('size', 0),
+                open_issues=item.get('open_issues_count', 0),
+                has_wiki=item.get('has_wiki', False),
+                has_pages=item.get('has_pages', False),
+                archived=item.get('archived', False)
+            )
+        
+        except Exception as e:
+            self.logger.error(f"Error parsing repository data: {e}")
+            return None
+    
+    def _deduplicate_repositories(self, repositories: List[RepositoryInfo]) -> List[RepositoryInfo]:
+        """Remove duplicate repositories from the list."""
+        
+        seen = set()
+        unique_repos = []
+        
+        for repo in repositories:
+            if repo.full_name not in seen:
+                seen.add(repo.full_name)
+                unique_repos.append(repo)
+        
+        return unique_repos
+    
+    def _calculate_quality_score(self, repo: RepositoryInfo) -> float:
+        """Calculate quality score for a repository."""
+        
+        score = 0.0
+        
+        # Stars (normalized, max 50 points)
+        star_score = min(repo.stars / 1000, 0.5)
+        score += star_score
+        
+        # Forks (normalized, max 20 points)
+        fork_score = min(repo.forks / 500, 0.2)
+        score += fork_score
+        
+        # Recent activity (max 15 points)
+        try:
+            updated_at = datetime.fromisoformat(repo.last_updated.replace('Z', '+00:00'))
+            days_since_update = (datetime.now().astimezone() - updated_at).days
+            
+            if days_since_update < 30:
+                score += 0.15
+            elif days_since_update < 90:
+                score += 0.10
+            elif days_since_update < 180:
+                score += 0.05
+        except:
+            pass
+        
+        # Has documentation (max 10 points)
+        if repo.has_wiki or repo.has_pages:
+            score += 0.1
+        
+        # License (max 5 points)
+        if repo.license:
+            score += 0.05
+        
+        return min(score, 1.0)
+    
+    def _calculate_relevance_score(self, repo: RepositoryInfo, query: str, language: Optional[str]) -> float:
+        """Calculate relevance score for a repository."""
+        
+        score = 0.0
+        query_lower = query.lower()
+        
+        # Name relevance (max 30 points)
+        name_words = repo.name.lower().split('-')
+        query_words = query_lower.split()
+        
+        name_matches = sum(1 for word in query_words if any(word in name_word for name_word in name_words))
+        if name_matches > 0:
+            score += min(name_matches / len(query_words) * 0.3, 0.3)
+        
+        # Description relevance (max 25 points)
+        if repo.description:
+            desc_lower = repo.description.lower()
+            desc_matches = sum(1 for word in query_words if word in desc_lower)
+            if desc_matches > 0:
+                score += min(desc_matches / len(query_words) * 0.25, 0.25)
+        
+        # Language match (max 20 points)
+        if language and repo.language:
+            if repo.language.lower() == language.lower():
+                score += 0.2
+        
+        # Topics relevance (max 15 points)
+        if repo.topics:
+            topic_matches = sum(1 for word in query_words if any(word in topic for topic in repo.topics))
+            if topic_matches > 0:
+                score += min(topic_matches / len(query_words) * 0.15, 0.15)
+        
+        # Popularity bonus (max 10 points)
+        if repo.stars > 100:
+            score += min(0.1, repo.stars / 10000)
+        
+        return min(score, 1.0)
 
 
-# Example usage
-async def main():
-    import os
+# Example usage and testing
+async def test_tier3_search():
+    """Test the Tier 3 AI-driven repository discovery."""
     
-    github_token = os.getenv('GITHUB_TOKEN')
-    searcher = Tier3Search(github_token)
+    tier3 = Tier3Search()
     
-    search_targets = {
-        'authentication': ['jwt', 'oauth', 'auth'],
-        'database': ['postgresql', 'orm', 'sqlalchemy'],
-        'api': ['fastapi', 'rest', 'endpoints']
-    }
+    test_queries = [
+        ("python web scraper", "python"),
+        ("react todo app", "javascript"),
+        ("cli tool file processing", "python"),
+        ("machine learning image classification", "python"),
+        ("rest api authentication", "python")
+    ]
     
-    print("Executing Tier 3 discovery search...")
-    results = await searcher.comprehensive_search(search_targets, 'python')
-    
-    print(f"\nFound {len(results)} repositories:")
-    for result in results[:10]:
-        print(f"\n{result.repository} ({result.full_name})")
-        print(f"  Stars: {result.stars}, Discovery: {result.discovery_score:.2f}, Gap-filling: {result.gap_filling_potential:.2f}")
-        print(f"  Query: {result.search_query}")
-        print(f"  Description: {result.description[:100]}...")
+    for query, language in test_queries:
+        print(f"\n=== Discovering: '{query}' (Language: {language}) ===")
+        
+        repositories = await tier3.discover_repositories(query, language, max_results=5)
+        
+        for i, repo in enumerate(repositories, 1):
+            print(f"\n{i}. {repo.name}")
+            print(f"   Full Name: {repo.full_name}")
+            print(f"   Description: {repo.description[:80]}...")
+            print(f"   Language: {repo.language}")
+            print(f"   Stars: {repo.stars}, Forks: {repo.forks}")
+            print(f"   Quality: {repo.quality_score:.2f}")
+            print(f"   Relevance: {repo.relevance_score:.2f}")
+            print(f"   Topics: {', '.join(repo.topics[:3])}")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
+    asyncio.run(test_tier3_search())
