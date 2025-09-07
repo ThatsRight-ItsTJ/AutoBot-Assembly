@@ -94,10 +94,14 @@ async def test_real_project():
                 'purpose': f"Provides {repo.description[:50]}..."
             })
         
+        # Use the correct method signature based on the actual ProjectGenerator
         project = await generator.generate_project(
-            analysis=analysis,
-            repositories=repositories_data,
-            packages=search_results.packages[:5]  # Use top 5 packages
+            project_name=analysis.name,
+            project_description=analysis.description,
+            language=analysis.language,
+            components=analysis.components,
+            dependencies=analysis.dependencies,
+            repositories=repositories_data
         )
         
         print(f"✅ Project generation completed: {project.name}")
