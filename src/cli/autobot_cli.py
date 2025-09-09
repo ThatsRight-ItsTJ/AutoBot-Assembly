@@ -31,15 +31,25 @@ sys.path.insert(0, str(project_root))
 from src.orchestration.search_orchestrator import SearchOrchestrator
 from src.assembly.project_generator import ProjectGenerator
 from src.reporting.ai_integrated_reporter import AIIntegratedReporter
+from src.cli.config_manager import ConfigManager
 
 
 class AutoBotCLI:
     """Command-line interface for AutoBot Assembly System."""
     
     def __init__(self):
+        # Initialize ConfigManager first
+        try:
+            self.config_manager = ConfigManager()
+            logging.info("ConfigManager initialized successfully in CLI")
+        except Exception as e:
+            logging.warning(f"Failed to initialize ConfigManager in CLI: {e}")
+            self.config_manager = None
+        
+        # Initialize components with ConfigManager
         self.orchestrator = SearchOrchestrator()
         self.generator = ProjectGenerator()
-        self.reporter = AIIntegratedReporter()
+        self.reporter = AIIntegratedReporter(config_manager=self.config_manager)
         
         # Ensure completed_downloads directory exists
         self.completed_downloads_dir = project_root / "completed_downloads"

@@ -76,6 +76,9 @@ class ProjectAnalyzer:
         self.ai_providers = {}
         self._initialize_providers()
         
+        # Function name for API key resolution
+        self.function_name = 'project_analyzer'
+        
         # Project analysis patterns
         self.analysis_patterns = {
             'web_scraping': {
@@ -110,7 +113,7 @@ class ProjectAnalyzer:
         # Initialize Pollinations provider (always available)
         if aiohttp is not None:
             self.ai_providers['pollinations'] = {
-                'url': 'https://text.pollinations.ai/openai',
+                'url': 'https://text.pollinations.ai/',
                 'available': True,
                 'api_key': None  # Pollinations doesn't require API key for free tier
             }
@@ -121,9 +124,6 @@ class ProjectAnalyzer:
             return
         
         try:
-            # Get preferred provider for this function
-            api_config = self.config_manager.get_function_api_key('project_analyzer')
-            
             # Get global API keys for other providers
             api_keys = self.config_manager.get_api_keys()
             
@@ -196,19 +196,18 @@ class ProjectAnalyzer:
         
         try:
             # Get function API configuration
-            api_config = self.config_manager.get_function_api_key('project_analyzer')
+            api_config = self.config_manager.get_function_api_key(self.function_name, provider)
             timeout = aiohttp.ClientTimeout(total=api_config.get('timeout', 15))
             
-            # If no provider specified, use function's preferred provider
-            if not provider:
-                provider = api_config['provider']
+            # Use resolved provider from config
+            resolved_provider = api_config['provider']
             
             # Try function-specific providers first
-            if provider in self.ai_providers and self.ai_providers[provider]['available']:
-                return await self._call_ai_provider(provider, prompt, timeout)
+            if resolved_provider in self.ai_providers and self.ai_providers[resolved_provider]['available']:
+                return await self._call_ai_provider(resolved_provider, prompt, timeout)
             
             # Try fallback providers
-            fallback_providers = api_config.get('fallback_providers', [])
+            fallback_providers = ['openai', 'anthropic', 'google', 'zai', 'pollinations']
             for fallback_provider in fallback_providers:
                 if fallback_provider in self.ai_providers and self.ai_providers[fallback_provider]['available']:
                     return await self._call_ai_provider(fallback_provider, prompt, timeout)
@@ -231,10 +230,6 @@ class ProjectAnalyzer:
         url = provider_config['url']
         api_key = provider_config['api_key']
         
-        if not api_key:
-            self.logger.warning(f"No API key available for {provider}")
-            return None
-        
         try:
             # Simplified prompt for better AI response
             analysis_prompt = f"Analyze this project: {prompt}. Respond with project name, type (web_application/api_service/data_pipeline), language (python/javascript), 4 key components, and 4 main dependencies."
@@ -245,7 +240,7 @@ class ProjectAnalyzer:
             }
             
             # Add authorization header if needed
-            if provider != 'pollinations':
+            if provider != 'pollinations' and api_key:
                 headers['Authorization'] = f"Bearer {api_key}"
             
             # Prepare payload based on provider
