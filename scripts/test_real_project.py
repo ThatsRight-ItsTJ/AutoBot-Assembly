@@ -11,6 +11,7 @@ import sys
 import os
 import tempfile
 import logging
+import json  # Added missing import
 from pathlib import Path
 from datetime import datetime
 
