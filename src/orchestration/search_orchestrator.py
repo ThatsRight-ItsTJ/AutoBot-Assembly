@@ -23,6 +23,11 @@ class SearchResults:
     discovered_repositories: List[DiscoveredRepository]
     total_results: int
     search_duration: float
+    
+    @property
+    def all_results(self):
+        """Get all results combined."""
+        return self.packages + self.curated_collections + self.discovered_repositories
 
 
 class SearchOrchestrator:
