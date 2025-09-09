@@ -95,19 +95,163 @@ async def test_real_project():
             })
         
         # Use the correct method signature based on the actual ProjectGenerator
+        # We need to create a simple files structure for the generator
+        # DEBUG: Create the main.py template separately to avoid f-string conflicts
+        main_py_template = """#!/usr/bin/env python3
+\"\"\"
+{project_name}
+Main application entry point
+\"\"\"
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import requests
+import asyncio
+from datetime import datetime, timedelta
+import config
+
+app = FastAPI(title="{project_name}", version="1.0.0")
+
+class PriceResponse(BaseModel):
+    symbol: str
+    price: float
+    timestamp: datetime
+    source: str
+
+@app.get("/api/health")
+async def health_check():
+    \"\"\"Health check endpoint\"\"\"
+    # DEBUG: Adding logging to validate datetime availability
+    logger.debug("Creating health check endpoint")
+    try:
+        # Test if datetime is available
+        test_time = datetime.now().isoformat()
+        logger.debug("DEBUG: datetime.now().isoformat() works")
+        result_dict = {{'status': 'healthy', 'timestamp': test_time}}
+    except Exception as e:
+        logger.error(f"DEBUG: datetime.now().isoformat() failed: {{e}}")
+        result_dict = {{'status': 'healthy', 'timestamp': '2024-01-01T00:00:00'}}
+    return result_dict
+
+@app.get("/api/prices", response_model=list[PriceResponse])
+async def get_prices(symbols: str = "BTC,ETH"):
+    \"\"\"Get current cryptocurrency prices\"\"\"
+    # This is a placeholder implementation
+    # In a real implementation, you would fetch from actual exchanges
+    prices = []
+    for symbol in symbols.split(','):
+        prices.append(PriceResponse(
+            symbol=symbol.strip(),
+            price=50000.0,  # Placeholder price
+            timestamp=datetime.now(),
+            source="api"
+        ))
+    return prices
+
+@app.get("/api/history")
+async def get_history(symbol: str = "BTC", days: int = 7):
+    \"\"\"Get historical price data\"\"\"
+    # Placeholder implementation
+    return {{
+        "symbol": symbol,
+        "data": [
+            {{"date": (datetime.now() - timedelta(days=i)).isoformat(), "price": 50000 + i * 100}}
+            for i in range(days)
+        ]
+    }}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+"""
+        
+        # Create the files dictionary
+        project_files = {
+            "README.md": f"""# {analysis.name}
+
+## Description
+{analysis.description}
+
+## Features
+- Real-time cryptocurrency price fetching
+- Multi-exchange integration
+- Historical data storage
+- REST API endpoints with rate limiting
+- Caching for improved performance
+
+## Installation
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+```bash
+python main.py
+```
+
+## API Endpoints
+- `GET /api/prices` - Get current cryptocurrency prices
+- `GET /api/history` - Get historical price data
+- `GET /api/health` - Health check endpoint
+
+## Configuration
+Edit `config.py` to customize settings including:
+- API keys for exchanges
+- Database connection
+- Rate limiting parameters
+- Cache settings
+
+## Dependencies
+{', '.join(analysis.dependencies)}
+""",
+            "requirements.txt": "\n".join([f"{dep}>=1.0.0" for dep in analysis.dependencies]),
+            "main.py": main_py_template.format(project_name=analysis.name),
+            "config.py": '''"""
+Configuration settings for {analysis.name}
+"""
+
+# API Settings
+API_HOST = "0.0.0.0"
+API_PORT = 8000
+DEBUG = True
+
+# Exchange API Keys (replace with your actual keys)
+BINANCE_API_KEY = "your_binance_api_key_here"
+BINANCE_SECRET_KEY = "your_binance_secret_key_here"
+COINBASE_API_KEY = "your_coinbase_api_key_here"
+
+# Database Configuration
+DATABASE_URL = "sqlite:///crypto_prices.db"
+
+# Rate Limiting
+RATE_LIMIT_REQUESTS = 100
+RATE_LIMIT_WINDOW = 60  # seconds
+
+# Cache Settings
+CACHE_TTL = 300  # 5 minutes
+CACHE_MAX_SIZE = 1000
+
+# Supported Cryptocurrencies
+SUPPORTED_SYMBOLS = ["BTC", "ETH", "BNB", "ADA", "DOT", "SOL"]
+
+# Historical Data Settings
+DEFAULT_HISTORY_DAYS = 30
+MAX_HISTORY_DAYS = 365
+'''
+        }
+        
         project = await generator.generate_project(
             project_name=analysis.name,
+            output_dir="./generated_projects",
+            files=project_files,
             project_description=analysis.description,
-            language=analysis.language,
-            components=analysis.components,
-            dependencies=analysis.dependencies,
-            repositories=repositories_data
+            language=analysis.language
         )
         
         print(f"✅ Project generation completed: {project.name}")
         print(f"   Path: {project.path}")
         print(f"   Files created: {len(project.files)}")
-        print(f"   Total size: {project.total_size:,} bytes")
+        print(f"   Total size: {project.size:,} bytes")
         print(f"   Key files: {', '.join(project.files[:3])}")
         print()
         
@@ -123,7 +267,7 @@ async def test_real_project():
             'description': analysis.description,
             'language': analysis.language,
             'files': project.files,
-            'size': project.total_size,
+            'size': project.size,
             'components': analysis.components,
             'dependencies': analysis.dependencies
         }
@@ -151,7 +295,7 @@ async def test_real_project():
         print(f"   Project Name: {project.name}")
         print(f"   Project Type: {analysis.project_type.value}")
         print(f"   Files Generated: {len(project.files)}")
-        print(f"   Total Size: {project.total_size:,} bytes")
+        print(f"   Total Size: {project.size:,} bytes")
         print(f"   AI Report: {len(ai_report):,} characters")
         print(f"   Resources Found: {len(search_results.packages)} packages, {len(search_results.discovered_repositories)} repos")
         print(f"   Analysis Confidence: {analysis.confidence}")

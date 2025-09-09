@@ -58,7 +58,7 @@ class ProjectAnalyzer:
         # AI provider configurations
         self.ai_providers = {
             'pollinations': {
-                'url': 'https://text.pollinations.ai/',
+                'url': 'https://text.pollinations.ai/openai',
                 'available': aiohttp is not None,
                 'api_key': self.pollinations_api_key
             }
@@ -122,25 +122,21 @@ class ProjectAnalyzer:
                 # Simplified prompt for better AI response
                 analysis_prompt = f"Analyze this project: {prompt}. Respond with project name, type (web_application/api_service/data_pipeline), language (python/javascript), 4 key components, and 4 main dependencies."
                 
+                # Pollinations AI uses a simpler format - just send the prompt
                 headers = {
                     'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {self.pollinations_api_key}',
                     'User-Agent': 'AutoBot-Assembly/1.0'
                 }
                 
-                # Simplified payload that matches working debug format
+                # Simplified payload for Pollinations AI
                 payload = {
                     'messages': [
                         {
-                            'role': 'system',
-                            'content': 'You are a software architect. Provide concise project analysis.'
-                        },
-                        {
                             'role': 'user',
-                            'content': analysis_prompt
+                            'content': f"You are a software architect. Analyze this project requirement: {analysis_prompt}"
                         }
                     ],
-                    'model': 'openai'
+                    'model': 'gpt-4'
                 }
                 
                 async with aiohttp.ClientSession() as session:

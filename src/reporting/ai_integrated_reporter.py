@@ -56,7 +56,7 @@ class AIIntegratedReporter:
         # AI provider configurations
         self.ai_providers = {
             'pollinations': {
-                'url': 'https://text.pollinations.ai/',
+                'url': 'https://text.pollinations.ai/openai',
                 'available': aiohttp is not None,
                 'api_key': self.pollinations_api_key
             },
@@ -373,23 +373,18 @@ No external repositories were integrated in this project."""
             if aiohttp:
                 headers = {
                     'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {self.pollinations_api_key}',
                     'User-Agent': 'AutoBot-Assembly/1.0'
                 }
                 
-                # Simplified payload matching debug success
+                # Simplified payload for Pollinations AI
                 payload = {
                     'messages': [
                         {
-                            'role': 'system',
-                            'content': 'You are a helpful software analyst.'
-                        },
-                        {
                             'role': 'user',
-                            'content': f"Provide a brief {analysis_type} analysis: {prompt}"
+                            'content': f"You are a helpful software analyst. Provide a brief {analysis_type} analysis: {prompt}"
                         }
                     ],
-                    'model': 'openai'
+                    'model': 'gpt-4'
                 }
                 
                 async with aiohttp.ClientSession() as session:
