@@ -23,20 +23,26 @@ git clone https://github.com/ThatsRight-ItsTJ/AutoBot-Assembly.git
 cd AutoBot-Assembly
 ```
 
-2. **Install dependencies:**
+2. **Create and activate a virtual environment:**
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. **Install dependencies:**
 ```bash
 pip install -r requirements.txt
 ```
 
-3. **Configure API keys (optional but recommended):**
+4. **Configure API keys (optional but recommended):**
 ```bash
 cp .env.example .env
 # Edit .env file with your API keys
 ```
 
-4. **Verify installation:**
+5. **Verify installation:**
 ```bash
-python scripts/test_working_components_fixed.py
+source venv/bin/activate && python scripts/test_working_components_fixed.py
 ```
 
 You should see: `Results: 5/5 tests passed (100.0%)`
@@ -155,28 +161,36 @@ GITHUB_TOKEN=ghp_your-github-token-here
 
 ## 💻 Usage
 
+### Important: Always Activate Virtual Environment
+
+Before running any commands, ensure your virtual environment is activated:
+
+```bash
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
 ### Command Line Interface (CLI)
 
 #### Interactive Mode
 ```bash
-python -m src.cli.autobot_cli interactive
+source venv/bin/activate && python -m src.cli.autobot_cli interactive
 ```
 
 #### Wizard Mode (Step-by-step guidance)
 ```bash
-python -m src.cli.autobot_cli wizard
+source venv/bin/activate && python -m src.cli.autobot_cli wizard
 ```
 
 #### Batch Mode (Direct prompt)
 ```bash
-python -m src.cli.autobot_cli batch "Create a Python web scraper for news articles"
+source venv/bin/activate && python -m src.cli.autobot_cli batch "Create a Python web scraper for news articles"
 ```
 
 ### Web Interface
 
 Start the web server:
 ```bash
-python -m src.web.web_server
+source venv/bin/activate && python -m src.web.web_server
 ```
 
 Visit `http://localhost:5000` in your browser for the interactive web interface.
@@ -185,7 +199,7 @@ Visit `http://localhost:5000` in your browser for the interactive web interface.
 
 Start the API server:
 ```bash
-python -m src.api.api_server
+source venv/bin/activate && python -m src.api.api_server
 ```
 
 API will be available at `http://localhost:8000`
@@ -271,7 +285,7 @@ asyncio.run(generate_project())
 
 ### Example 1: Web Scraper
 ```bash
-python -m src.cli.autobot_cli batch "Create a Python web scraper that extracts news headlines from multiple websites and saves them to JSON"
+source venv/bin/activate && python -m src.cli.autobot_cli batch "Create a Python web scraper that extracts news headlines from multiple websites and saves them to JSON"
 ```
 
 **Generated Output:**
@@ -282,7 +296,7 @@ python -m src.cli.autobot_cli batch "Create a Python web scraper that extracts n
 
 ### Example 2: REST API
 ```bash
-python -m src.cli.autobot_cli batch "Build a Node.js REST API for user management with JWT authentication and MongoDB"
+source venv/bin/activate && python -m src.cli.autobot_cli batch "Build a Node.js REST API for user management with JWT authentication and MongoDB"
 ```
 
 **Generated Output:**
@@ -294,7 +308,7 @@ python -m src.cli.autobot_cli batch "Build a Node.js REST API for user managemen
 
 ### Example 3: React Dashboard
 ```bash
-python -m src.cli.autobot_cli batch "Create a React dashboard for data visualization with charts and real-time updates"
+source venv/bin/activate && python -m src.cli.autobot_cli batch "Create a React dashboard for data visualization with charts and real-time updates"
 ```
 
 **Generated Output:**
@@ -308,19 +322,19 @@ python -m src.cli.autobot_cli batch "Create a React dashboard for data visualiza
 
 ### Run All Tests
 ```bash
-python scripts/test_working_components_fixed.py
+source venv/bin/activate && python scripts/test_working_components_fixed.py
 ```
 
 ### Run Specific Component Tests
 ```bash
 # Test project analyzer
-python scripts/test_compatibility.py
+source venv/bin/activate && python scripts/test_compatibility.py
 
 # Test assembly engine
-python scripts/test_assembly.py
+source venv/bin/activate && python scripts/test_assembly.py
 
 # Test quality assurance
-python scripts/test_qa.py
+source venv/bin/activate && python scripts/test_qa.py
 ```
 
 ### Expected Test Results
@@ -340,33 +354,49 @@ Results: 5/5 tests passed (100.0%)
 
 ### Common Issues
 
-**1. Import Errors**
+**1. Virtual Environment Not Activated**
+```bash
+# Always activate virtual environment before running commands
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Then run your command
+source venv/bin/activate && python -m src.cli.autobot_cli batch "your prompt"
+```
+
+**2. Python Command Not Found**
+```bash
+# Use python3 instead of python
+python3 -m venv venv
+source venv/bin/activate && pip install -r requirements.txt
+```
+
+**3. Import Errors**
 ```bash
 # Ensure you're in the project root directory
 cd AutoBot-Assembly
 export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
 ```
 
-**2. API Rate Limits**
+**4. API Rate Limits**
 - The system automatically falls back to free Pollinations API
 - Consider upgrading to premium API keys for better performance
 - Libraries.io has a 60 requests/minute limit on free tier
 
-**3. GitHub API Limits**
+**5. GitHub API Limits**
 - Generate a GitHub personal access token
 - Add it to your `.env` file as `GITHUB_TOKEN`
 - Without token: 60 requests/hour limit
 - With token: 5,000 requests/hour limit
 
-**4. Missing Dependencies**
+**6. Missing Dependencies**
 ```bash
-pip install --upgrade -r requirements.txt
+source venv/bin/activate && pip install --upgrade -r requirements.txt
 ```
 
-**5. API Key Issues**
+**7. API Key Issues**
 ```bash
 # Test your API keys
-python -c "
+source venv/bin/activate && python -c "
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -381,7 +411,7 @@ print('Libraries.io:', 'Set' if os.getenv('LIBRARIES_IO_API_KEY') else 'Not set'
 Enable verbose logging:
 ```bash
 export AUTOBOT_DEBUG=1
-python -m src.cli.autobot_cli interactive
+source venv/bin/activate && python -m src.cli.autobot_cli interactive
 ```
 
 ## 📊 Performance Metrics
@@ -413,7 +443,7 @@ python -m src.cli.autobot_cli interactive
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature-name`
 3. Make your changes and add tests
-4. Run the test suite: `python scripts/test_working_components_fixed.py`
+4. Run the test suite: `source venv/bin/activate && python scripts/test_working_components_fixed.py`
 5. Commit your changes: `git commit -am 'Add feature'`
 6. Push to the branch: `git push origin feature-name`
 7. Submit a pull request
