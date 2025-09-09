@@ -33,6 +33,12 @@ try:
 except ImportError:
     genai = None
 
+# Import configuration manager
+try:
+    from src.cli.config_manager import ConfigManager
+except ImportError:
+    ConfigManager = None
+
 
 @dataclass
 class AIAnalysisResult:
@@ -47,18 +53,28 @@ class AIAnalysisResult:
 class AIIntegratedReporter:
     """AI-powered project reporter with comprehensive analysis capabilities."""
     
-    def __init__(self):
+    def __init__(self, config_manager: ConfigManager = None):
         self.logger = logging.getLogger(__name__)
         
-        # Set Pollinations API key
-        self.pollinations_api_key = "D6ivBlSgXRsU1F7r"
+        # Initialize configuration manager
+        if config_manager:
+            self.config_manager = config_manager
+        elif ConfigManager:
+            try:
+                self.config_manager = ConfigManager()
+                self.logger.info("ConfigManager initialized successfully")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize ConfigManager: {e}")
+                self.config_manager = None
+        else:
+            self.logger.warning("ConfigManager not available, using fallback behavior")
+            self.config_manager = None
         
         # AI provider configurations
         self.ai_providers = {
             'pollinations': {
                 'url': 'https://text.pollinations.ai/openai',
-                'available': aiohttp is not None,
-                'api_key': self.pollinations_api_key
+                'available': aiohttp is not None
             },
             'openai': {
                 'available': openai is not None
@@ -68,8 +84,19 @@ class AIIntegratedReporter:
             },
             'google': {
                 'available': genai is not None
+            },
+            'zai': {
+                'available': True,  # Z.ai/Bigmodel support
+                'base_url': 'https://open.bigmodel.cn/api/paas/v4',
+                'endpoints': {
+                    'chat': '/chat/completions',
+                    'models': '/models'
+                }
             }
         }
+        
+        # Function name for API key resolution
+        self.function_name = 'ai_reporter'
     
     async def generate_comprehensive_report(
         self, 
@@ -365,18 +392,287 @@ No external repositories were integrated in this project."""
 ---
 *© 2024 AutoBot Assembly Team - Revolutionizing Software Development with AI*"""
     
-    async def _get_ai_analysis(self, prompt: str, analysis_type: str) -> str:
-        """Get AI analysis using available providers."""
+    def _resolve_api_config(self, provider: str = None) -> Dict[str, Any]:
+        """Resolve API configuration for the current function."""
         
-        # Try Pollinations AI with simplified approach
+        if not self.config_manager:
+            # Fallback to legacy behavior if config manager is not available
+            self.logger.warning("ConfigManager not available, using Pollinations fallback")
+            return {
+                'provider': 'pollinations',
+                'api_key': None,  # No hardcoded key - rely on environment or free tier
+                'timeout': 30,
+                'retry_count': 3
+            }
+        
+        # Get API key configuration for this function
+        try:
+            config = self.config_manager.get_function_api_key(self.function_name, provider)
+            
+            # If no specific provider requested, check if we have a valid API key
+            if not provider and config.get('api_key'):
+                return config
+            
+            # If provider is specified but no API key, try fallback to Pollinations
+            if provider and not config.get('api_key') and provider != 'pollinations':
+                self.logger.warning(f"No API key available for {provider}, falling back to Pollinations")
+                return self.config_manager.get_function_api_key(self.function_name, 'pollinations')
+            
+            # If no API key for any provider, try environment variables
+            if not config.get('api_key'):
+                self.logger.info("No API key in config, checking environment variables")
+                api_keys = self.config_manager.get_api_keys()
+                
+                # Check environment variables for any available API key
+                for env_provider, env_key in api_keys.items():
+                    if env_key and env_provider != 'github_token':
+                        self.logger.info(f"Found API key in environment for {env_provider}")
+                        return {
+                            'provider': env_provider.replace('_api_key', ''),
+                            'api_key': env_key,
+                            'timeout': 30,
+                            'retry_count': 3
+                        }
+                
+                # If no environment keys, use Pollinations
+                self.logger.warning("No API keys found in environment, using Pollinations fallback")
+                return self.config_manager.get_function_api_key(self.function_name, 'pollinations')
+            
+            return config
+        except Exception as e:
+            self.logger.error(f"Failed to resolve API config: {e}, falling back to Pollinations")
+            return {
+                'provider': 'pollinations',
+                'api_key': None,
+                'timeout': 30,
+                'retry_count': 3
+            }
+    
+    async def _get_ai_analysis(self, prompt: str, analysis_type: str) -> str:
+        """Get AI analysis using available providers with fallback logic."""
+        
+        # Get API configuration for this function
+        api_config = self._resolve_api_config()
+        provider = api_config['provider']
+        api_key = api_config['api_key']
+        timeout = api_config.get('timeout', 30)
+        
+        self.logger.info(f"Attempting AI analysis with provider: {provider}")
+        
+        # Try the preferred provider first
+        try:
+            if provider == 'pollinations':
+                result = await self._call_pollinations_api(prompt, timeout)
+                if result:
+                    self.logger.info(f"Successfully got analysis from Pollinations")
+                    return result
+            elif provider == 'openai' and openai and api_key:
+                result = await self._call_openai_api(prompt, api_key, timeout)
+                if result:
+                    self.logger.info(f"Successfully got analysis from OpenAI")
+                    return result
+            elif provider == 'anthropic' and anthropic and api_key:
+                result = await self._call_anthropic_api(prompt, api_key, timeout)
+                if result:
+                    self.logger.info(f"Successfully got analysis from Anthropic")
+                    return result
+            elif provider == 'google' and genai and api_key:
+                result = await self._call_google_api(prompt, api_key, timeout)
+                if result:
+                    self.logger.info(f"Successfully got analysis from Google")
+                    return result
+            elif provider == 'zai' and api_key:
+                result = await self._call_zai_api(prompt, api_key, timeout)
+                if result:
+                    self.logger.info(f"Successfully got analysis from Z.ai")
+                    return result
+        except Exception as e:
+            self.logger.warning(f"Primary {provider} API failed: {e}")
+        
+        # Fallback to other providers in priority order
+        fallback_providers = ['openai', 'anthropic', 'google', 'zai', 'pollinations']
+        if provider in fallback_providers:
+            fallback_providers.remove(provider)
+        
+        self.logger.info(f"Trying fallback providers: {fallback_providers}")
+        for fallback_provider in fallback_providers:
+            try:
+                fallback_config = self._resolve_api_config(fallback_provider)
+                fallback_api_key = fallback_config['api_key']
+                fallback_timeout = fallback_config.get('timeout', 30)
+                
+                self.logger.info(f"Trying fallback provider: {fallback_provider}")
+                
+                if fallback_provider == 'pollinations':
+                    result = await self._call_pollinations_api(prompt, fallback_timeout)
+                    if result:
+                        self.logger.info(f"Successfully got analysis from fallback Pollinations")
+                        return result
+                elif fallback_provider == 'openai' and openai and fallback_api_key:
+                    result = await self._call_openai_api(prompt, fallback_api_key, fallback_timeout)
+                    if result:
+                        self.logger.info(f"Successfully got analysis from fallback OpenAI")
+                        return result
+                elif fallback_provider == 'anthropic' and anthropic and fallback_api_key:
+                    result = await self._call_anthropic_api(prompt, fallback_api_key, fallback_timeout)
+                    if result:
+                        self.logger.info(f"Successfully got analysis from fallback Anthropic")
+                        return result
+                elif fallback_provider == 'google' and genai and fallback_api_key:
+                    result = await self._call_google_api(prompt, fallback_api_key, fallback_timeout)
+                    if result:
+                        self.logger.info(f"Successfully got analysis from fallback Google")
+                        return result
+                elif fallback_provider == 'zai' and fallback_api_key:
+                    result = await self._call_zai_api(prompt, fallback_api_key, fallback_timeout)
+                    if result:
+                        self.logger.info(f"Successfully got analysis from fallback Z.ai")
+                        return result
+            except Exception as e:
+                self.logger.warning(f"Fallback {fallback_provider} API failed: {e}")
+        
+        # Final fallback to static analysis
+        self.logger.warning("All AI providers failed, using fallback analysis")
+        return self._get_fallback_analysis(analysis_type)
+    
+    async def _call_pollinations_api(self, prompt: str, timeout: int) -> Optional[str]:
+        """Call Pollinations AI API."""
+        if not aiohttp:
+            return None
+        
+        try:
+            headers = {
+                'Content-Type': 'application/json',
+                'User-Agent': 'AutoBot-Assembly/1.0'
+            }
+            
+            payload = {
+                'messages': [
+                    {
+                        'role': 'user',
+                        'content': f"You are a helpful software analyst. Provide a brief analysis: {prompt}"
+                    }
+                ],
+                'model': 'gpt-4'
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    'https://text.pollinations.ai/',
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=timeout)
+                ) as response:
+                    if response.status == 200:
+                        result = await response.text()
+                        # Clean up and return result
+                        cleaned_result = result.strip().replace('{"message": "', '').replace('"}', '')
+                        return cleaned_result[:400] + "..." if len(cleaned_result) > 400 else cleaned_result
+                    else:
+                        self.logger.warning(f"Pollinations API returned status {response.status}")
+                        return None
+        except Exception as e:
+            self.logger.warning(f"Pollinations API failed: {e}")
+            return None
+    
+    async def _call_openai_api(self, prompt: str, api_key: str, timeout: int) -> Optional[str]:
+        """Call OpenAI API."""
+        if not openai:
+            return None
+        
+        try:
+            client = openai.AsyncOpenAI(api_key=api_key)
+            response = await client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                timeout=timeout
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            self.logger.warning(f"OpenAI API failed: {e}")
+            return None
+    
+    async def _call_anthropic_api(self, prompt: str, api_key: str, timeout: int) -> Optional[str]:
+        """Call Anthropic API."""
+        if not anthropic:
+            return None
+        
+        try:
+            client = anthropic.AsyncAnthropic(api_key=api_key)
+            response = await client.messages.create(
+                model="claude-3-sonnet-20240229",
+                max_tokens=1000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.content[0].text
+        except Exception as e:
+            self.logger.warning(f"Anthropic API failed: {e}")
+            return None
+    
+    async def _call_google_api(self, prompt: str, api_key: str, timeout: int) -> Optional[str]:
+        """Call Google API."""
+        if not genai:
+            return None
+        
+        try:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-pro')
+            response = await model.generate_content_async(prompt)
+            return response.text
+        except Exception as e:
+            self.logger.warning(f"Google API failed: {e}")
+            return None
+    
+    async def _call_zai_api(self, prompt: str, api_key: str, timeout: int) -> Optional[str]:
+        """Call Z.ai/Bigmodel API."""
+        if not aiohttp:
+            return None
+        
+        try:
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'Authorization': f'Bearer {api_key}'
+            }
+            
+            payload = {
+                'model': 'glm-4',
+                'messages': [{'role': 'user', 'content': prompt}],
+                'temperature': 0.7,
+                'max_tokens': 2000
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=timeout)
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        return result['choices'][0]['message']['content']
+                    else:
+                        self.logger.warning(f"Z.ai API returned status {response.status}")
+                        return None
+        except Exception as e:
+            self.logger.warning(f"Z.ai API failed: {e}")
+            return None
+    
+    async def _get_legacy_ai_analysis(self, prompt: str, analysis_type: str) -> str:
+        """Legacy AI analysis method for backward compatibility."""
+        
+        self.logger.warning("Using legacy AI analysis method - ConfigManager not available")
+        
+        # Try Pollinations AI with simplified approach (free tier, no API key required)
         try:
             if aiohttp:
+                self.logger.info("Attempting Pollinations API (free tier)")
                 headers = {
                     'Content-Type': 'application/json',
                     'User-Agent': 'AutoBot-Assembly/1.0'
                 }
                 
-                # Simplified payload for Pollinations AI
                 payload = {
                     'messages': [
                         {
@@ -396,15 +692,19 @@ No external repositories were integrated in this project."""
                     ) as response:
                         if response.status == 200:
                             result = await response.text()
-                            # Clean up and return result
                             cleaned_result = result.strip().replace('{"message": "', '').replace('"}', '')
-                            return cleaned_result[:400] + "..." if len(cleaned_result) > 400 else cleaned_result
+                            final_result = cleaned_result[:400] + "..." if len(cleaned_result) > 400 else cleaned_result
+                            self.logger.info("Successfully got analysis from legacy Pollinations API")
+                            return final_result
                         else:
                             self.logger.warning(f"Pollinations API returned status {response.status}")
         except Exception as e:
-            self.logger.warning(f"Pollinations AI failed: {e}")
+            self.logger.warning(f"Legacy Pollinations AI failed: {e}")
         
-        # Fallback to static analysis based on type
+        return self._get_fallback_analysis(analysis_type)
+    
+    def _get_fallback_analysis(self, analysis_type: str) -> str:
+        """Get fallback analysis based on type."""
         fallback_responses = {
             'executive_summary': """This project demonstrates excellent architectural design with modular components and clean separation of concerns. The automated generation process has created a well-structured codebase that follows industry best practices. The integration of multiple repositories shows thoughtful dependency management and code reuse strategies. The AI-driven approach ensures optimal component selection and architectural decisions.""",
             

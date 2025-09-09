@@ -19,6 +19,12 @@ try:
 except ImportError:
     aiohttp = None
 
+# Import ConfigManager
+try:
+    from src.cli.config_manager import ConfigManager
+except ImportError:
+    ConfigManager = None
+
 
 class ProjectType(Enum):
     """Types of projects that can be analyzed."""
@@ -49,20 +55,26 @@ class ProjectAnalysis:
 class ProjectAnalyzer:
     """AI-powered project analysis engine."""
     
-    def __init__(self):
+    def __init__(self, config_manager=None):
         self.logger = logging.getLogger(__name__)
         
-        # Set Pollinations API key
-        self.pollinations_api_key = "D6ivBlSgXRsU1F7r"
+        # Initialize configuration manager with error handling
+        if config_manager:
+            self.config_manager = config_manager
+        elif ConfigManager:
+            try:
+                self.config_manager = ConfigManager()
+                self.logger.info("ConfigManager initialized successfully")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize ConfigManager: {e}")
+                self.config_manager = None
+        else:
+            self.logger.warning("ConfigManager not available, using fallback behavior")
+            self.config_manager = None
         
-        # AI provider configurations
-        self.ai_providers = {
-            'pollinations': {
-                'url': 'https://text.pollinations.ai/openai',
-                'available': aiohttp is not None,
-                'api_key': self.pollinations_api_key
-            }
-        }
+        # Initialize AI provider configurations
+        self.ai_providers = {}
+        self._initialize_providers()
         
         # Project analysis patterns
         self.analysis_patterns = {
@@ -92,13 +104,70 @@ class ProjectAnalyzer:
             }
         }
     
-    async def analyze_project_prompt(self, prompt: str, provider: str = "pollinations") -> ProjectAnalysis:
+    def _initialize_providers(self):
+        """Initialize AI provider configurations."""
+        
+        # Initialize Pollinations provider (always available)
+        if aiohttp is not None:
+            self.ai_providers['pollinations'] = {
+                'url': 'https://text.pollinations.ai/openai',
+                'available': True,
+                'api_key': None  # Pollinations doesn't require API key for free tier
+            }
+        
+        # If ConfigManager is not available, only use Pollinations
+        if not self.config_manager:
+            self.logger.warning("ConfigManager not available, only Pollinations AI will be available")
+            return
+        
+        try:
+            # Get preferred provider for this function
+            api_config = self.config_manager.get_function_api_key('project_analyzer')
+            
+            # Get global API keys for other providers
+            api_keys = self.config_manager.get_api_keys()
+            
+            # Initialize OpenAI provider
+            if api_keys.get('openai_api_key'):
+                self.ai_providers['openai'] = {
+                    'url': 'https://api.openai.com/v1/chat/completions',
+                    'available': True,
+                    'api_key': api_keys['openai_api_key']
+                }
+            
+            # Initialize Anthropic provider
+            if api_keys.get('anthropic_api_key'):
+                self.ai_providers['anthropic'] = {
+                    'url': 'https://api.anthropic.com/v1/messages',
+                    'available': True,
+                    'api_key': api_keys['anthropic_api_key']
+                }
+            
+            # Initialize Google provider
+            if api_keys.get('google_api_key'):
+                self.ai_providers['google'] = {
+                    'url': 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',
+                    'available': True,
+                    'api_key': api_keys['google_api_key']
+                }
+            
+            # Initialize Z.ai provider
+            if api_keys.get('zai_api_key'):
+                self.ai_providers['zai'] = {
+                    'url': 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+                    'available': True,
+                    'api_key': api_keys['zai_api_key']
+                }
+        except Exception as e:
+            self.logger.error(f"Failed to initialize AI providers: {e}")
+    
+    async def analyze_project_prompt(self, prompt: str, provider: str = None) -> ProjectAnalysis:
         """
         Analyze a project prompt and generate comprehensive project specifications.
         
         Args:
             prompt: User's project description/requirements
-            provider: AI provider to use for analysis
+            provider: AI provider to use for analysis (None for function's preferred provider)
             
         Returns:
             ProjectAnalysis: Comprehensive analysis of the project requirements
@@ -114,21 +183,73 @@ class ProjectAnalyzer:
         # Fallback to pattern-based analysis
         return self._pattern_based_analysis(prompt)
     
-    async def _get_ai_analysis(self, prompt: str, provider: str) -> Optional[ProjectAnalysis]:
+    async def _get_ai_analysis(self, prompt: str, provider: str = None) -> Optional[ProjectAnalysis]:
         """Get AI-powered project analysis."""
         
-        if provider == "pollinations" and aiohttp:
-            try:
-                # Simplified prompt for better AI response
-                analysis_prompt = f"Analyze this project: {prompt}. Respond with project name, type (web_application/api_service/data_pipeline), language (python/javascript), 4 key components, and 4 main dependencies."
-                
-                # Pollinations AI uses a simpler format - just send the prompt
-                headers = {
-                    'Content-Type': 'application/json',
-                    'User-Agent': 'AutoBot-Assembly/1.0'
-                }
-                
-                # Simplified payload for Pollinations AI
+        # If ConfigManager is not available, use Pollinations as fallback
+        if not self.config_manager:
+            self.logger.warning("ConfigManager not available, using Pollinations fallback")
+            if 'pollinations' in self.ai_providers and self.ai_providers['pollinations']['available']:
+                timeout = aiohttp.ClientTimeout(total=15)
+                return await self._call_ai_provider('pollinations', prompt, timeout)
+            return None
+        
+        try:
+            # Get function API configuration
+            api_config = self.config_manager.get_function_api_key('project_analyzer')
+            timeout = aiohttp.ClientTimeout(total=api_config.get('timeout', 15))
+            
+            # If no provider specified, use function's preferred provider
+            if not provider:
+                provider = api_config['provider']
+            
+            # Try function-specific providers first
+            if provider in self.ai_providers and self.ai_providers[provider]['available']:
+                return await self._call_ai_provider(provider, prompt, timeout)
+            
+            # Try fallback providers
+            fallback_providers = api_config.get('fallback_providers', [])
+            for fallback_provider in fallback_providers:
+                if fallback_provider in self.ai_providers and self.ai_providers[fallback_provider]['available']:
+                    return await self._call_ai_provider(fallback_provider, prompt, timeout)
+            
+            # No available providers
+            self.logger.warning(f"No available AI providers for project analysis")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error getting AI analysis: {e}")
+            # Try Pollinations as final fallback
+            if 'pollinations' in self.ai_providers and self.ai_providers['pollinations']['available']:
+                timeout = aiohttp.ClientTimeout(total=15)
+                return await self._call_ai_provider('pollinations', prompt, timeout)
+            return None
+    
+    async def _call_ai_provider(self, provider: str, prompt: str, timeout: aiohttp.ClientTimeout) -> Optional[ProjectAnalysis]:
+        """Call a specific AI provider."""
+        
+        provider_config = self.ai_providers[provider]
+        url = provider_config['url']
+        api_key = provider_config['api_key']
+        
+        if not api_key:
+            self.logger.warning(f"No API key available for {provider}")
+            return None
+        
+        try:
+            # Simplified prompt for better AI response
+            analysis_prompt = f"Analyze this project: {prompt}. Respond with project name, type (web_application/api_service/data_pipeline), language (python/javascript), 4 key components, and 4 main dependencies."
+            
+            headers = {
+                'Content-Type': 'application/json',
+                'User-Agent': 'AutoBot-Assembly/1.0'
+            }
+            
+            # Add authorization header if needed
+            if provider != 'pollinations':
+                headers['Authorization'] = f"Bearer {api_key}"
+            
+            # Prepare payload based on provider
+            if provider == 'pollinations':
                 payload = {
                     'messages': [
                         {
@@ -138,24 +259,29 @@ class ProjectAnalyzer:
                     ],
                     'model': 'gpt-4'
                 }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        'https://text.pollinations.ai/',
-                        json=payload,
-                        headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=15)
-                    ) as response:
-                        if response.status == 200:
-                            result = await response.text()
-                            self.logger.info(f"AI analysis successful: {len(result)} characters")
-                            return self._parse_ai_response(result, prompt)
-                        else:
-                            response_text = await response.text()
-                            self.logger.warning(f"Pollinations API returned status {response.status}: {response_text}")
+            else:
+                payload = {
+                    'messages': [
+                        {
+                            'role': 'user',
+                            'content': f"You are a software architect. Analyze this project requirement: {analysis_prompt}"
+                        }
+                    ],
+                    'model': 'gpt-4' if provider == 'openai' else 'claude-3-sonnet-20240229' if provider == 'anthropic' else 'gemini-pro'
+                }
             
-            except Exception as e:
-                self.logger.warning(f"AI analysis failed: {e}")
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers, timeout=timeout) as response:
+                    if response.status == 200:
+                        result = await response.text()
+                        self.logger.info(f"AI analysis successful with {provider}: {len(result)} characters")
+                        return self._parse_ai_response(result, prompt)
+                    else:
+                        response_text = await response.text()
+                        self.logger.warning(f"{provider} API returned status {response.status}: {response_text}")
+        
+        except Exception as e:
+            self.logger.warning(f"AI analysis failed with {provider}: {e}")
         
         return None
     

@@ -33,12 +33,16 @@ class UserConfig:
     concurrent_clones: int = 3
     
     # API settings - Support for multiple providers
-    api_provider: str = "pollinations"  # pollinations, openai, anthropic, google
+    api_provider: str = "pollinations"  # pollinations, openai, anthropic, google, zai
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     pollinations_api_key: Optional[str] = None  # Optional, free tier available
+    zai_api_key: Optional[str] = None  # Z.ai/Bigmodel provider
     github_token: Optional[str] = None
+    
+    # New: Per-Function API Key Configuration
+    function_api_keys: Optional[Dict[str, Dict[str, Any]]] = None
     
     # UI preferences
     use_rich: bool = True
@@ -139,34 +143,45 @@ class ConfigManager:
         # Priority: User config > Environment variables
         api_keys = {
             'openai_api_key': (
-                self._config.openai_api_key or 
+                self._config.openai_api_key or
                 os.getenv('OPENAI_API_KEY')
             ),
             'anthropic_api_key': (
-                self._config.anthropic_api_key or 
+                self._config.anthropic_api_key or
                 os.getenv('ANTHROPIC_API_KEY')
             ),
             'google_api_key': (
-                self._config.google_api_key or 
+                self._config.google_api_key or
                 os.getenv('GOOGLE_API_KEY')
             ),
             'pollinations_api_key': (
-                self._config.pollinations_api_key or 
+                self._config.pollinations_api_key or
                 os.getenv('POLLINATIONS_API_KEY')
             ),
+            'zai_api_key': (
+                self._config.zai_api_key or
+                os.getenv('ZAI_API_KEY')
+            ),
             'github_token': (
-                self._config.github_token or 
+                self._config.github_token or
                 os.getenv('GITHUB_TOKEN')
             )
         }
         
         return api_keys
     
-    def get_preferred_api_provider(self) -> str:
+    def get_preferred_api_provider(self, function_name: str = None) -> str:
         """Get the preferred API provider based on configuration and available keys."""
         
         api_keys = self.get_api_keys()
         preferred = self._config.api_provider.lower()
+        
+        # If function-specific config is requested, check function preferences first
+        if function_name and self._config.function_api_keys:
+            function_config = self._config.function_api_keys.get(function_name, {})
+            function_provider = function_config.get('provider')
+            if function_provider:
+                preferred = function_provider.lower()
         
         # Check if preferred provider has API key (except Pollinations which is free)
         if preferred == "pollinations":
@@ -177,6 +192,8 @@ class ConfigManager:
             return "anthropic"
         elif preferred == "google" and api_keys['google_api_key']:
             return "google"
+        elif preferred == "zai" and api_keys['zai_api_key']:
+            return "zai"
         
         # Fallback logic: use any available API key
         if api_keys['openai_api_key']:
@@ -185,6 +202,8 @@ class ConfigManager:
             return "anthropic"
         elif api_keys['google_api_key']:
             return "google"
+        elif api_keys['zai_api_key']:
+            return "zai"
         else:
             # Default to Pollinations (free)
             return "pollinations"
@@ -202,6 +221,8 @@ class ConfigManager:
             self.update_config(google_api_key=api_key)
         elif provider == 'pollinations':
             self.update_config(pollinations_api_key=api_key)
+        elif provider == 'zai':
+            self.update_config(zai_api_key=api_key)
         elif provider == 'github':
             self.update_config(github_token=api_key)
         else:
@@ -210,7 +231,7 @@ class ConfigManager:
     def set_api_provider(self, provider: str):
         """Set preferred API provider."""
         
-        valid_providers = ['pollinations', 'openai', 'anthropic', 'google']
+        valid_providers = ['pollinations', 'openai', 'anthropic', 'google', 'zai']
         provider = provider.lower()
         
         if provider in valid_providers:
@@ -219,7 +240,7 @@ class ConfigManager:
         else:
             self.logger.error(f"Invalid API provider: {provider}. Valid options: {valid_providers}")
     
-    def get_api_status(self) -> Dict[str, Dict[str, Any]]:
+    def get_api_status(self, function_name: str = None) -> Dict[str, Dict[str, Any]]:
         """Get status of all API providers."""
         
         api_keys = self.get_api_keys()
@@ -244,6 +265,11 @@ class ConfigManager:
             'google': {
                 'name': 'Google Gemini',
                 'free_tier': True,
+                'requires_key': True
+            },
+            'zai': {
+                'name': 'Z.ai/Bigmodel',
+                'free_tier': False,
                 'requires_key': True
             }
         }
@@ -272,7 +298,188 @@ class ConfigManager:
                 'status': status_msg
             }
         
+        # Add function-specific status if requested
+        if function_name:
+            function_config = self.get_function_config(function_name)
+            status['function_config'] = {
+                'function_name': function_name,
+                'preferred_provider': function_config.get('provider', self._config.api_provider),
+                'fallback_providers': function_config.get('fallback_providers', []),
+                'timeout': function_config.get('timeout', 30),
+                'retry_count': function_config.get('retry_count', 3)
+            }
+        
         return status
+    
+    def get_function_api_key(self, function_name: str, provider: str = None) -> Dict[str, Any]:
+        """
+        Get API key configuration for a specific function.
+        
+        Args:
+            function_name: Name of the function (project_analyzer, ai_reporter, etc.)
+            provider: Optional specific provider to use
+            
+        Returns:
+            Dictionary with resolved configuration
+        """
+        # Initialize function_api_keys if not present
+        if not self._config.function_api_keys:
+            self._config.function_api_keys = self._get_default_function_keys()
+            self.save_config(self._config)
+        
+        # Get function-specific config
+        function_config = self._config.function_api_keys.get(function_name, {})
+        
+        # Determine provider to use
+        if provider:
+            target_provider = provider
+        else:
+            target_provider = function_config.get('provider') or self._config.api_provider
+        
+        # Priority order for API key resolution:
+        # 1. Function-specific API key
+        # 2. Global API key
+        # 3. Environment variable for function-specific key
+        # 4. Environment variable for global key
+        # 5. Environment variable for any available API key (fallback)
+        
+        # Check function-specific key first
+        function_key = function_config.get(f'{target_provider}_api_key')
+        
+        if function_key:
+            self.logger.debug(f"Found function-specific API key for {target_provider} in {function_name}")
+            return {
+                'provider': target_provider,
+                'api_key': function_key,
+                'timeout': function_config.get('timeout', 30),
+                'retry_count': function_config.get('retry_count', 3)
+            }
+        
+        # Fall back to global key
+        global_key = getattr(self._config, f'{target_provider}_api_key', None)
+        
+        if global_key:
+            self.logger.debug(f"Found global API key for {target_provider}")
+            return {
+                'provider': target_provider,
+                'api_key': global_key,
+                'timeout': function_config.get('timeout', 30),
+                'retry_count': function_config.get('retry_count', 3)
+            }
+        
+        # Check environment variables in priority order
+        env_var_names = [
+            f'{function_name.upper()}_{target_provider.upper()}_API_KEY',  # Function-specific
+            f'{target_provider.upper()}_API_KEY',  # Global
+            f'{target_provider.upper()}_KEY'  # Alternative naming
+        ]
+        
+        for env_var in env_var_names:
+            env_key = os.getenv(env_var)
+            if env_key:
+                self.logger.debug(f"Found API key in environment variable: {env_var}")
+                return {
+                    'provider': target_provider,
+                    'api_key': env_key,
+                    'timeout': function_config.get('timeout', 30),
+                    'retry_count': function_config.get('retry_count', 3)
+                }
+        
+        # Final fallback: check for any available API key
+        api_keys = self.get_api_keys()
+        for provider_name, key_value in api_keys.items():
+            if key_value and provider_name != 'github_token':
+                self.logger.debug(f"Found fallback API key for {provider_name}")
+                return {
+                    'provider': provider_name.replace('_api_key', ''),
+                    'api_key': key_value,
+                    'timeout': function_config.get('timeout', 30),
+                    'retry_count': function_config.get('retry_count', 3)
+                }
+        
+        # No key available - Pollinations doesn't require a key for free tier
+        if target_provider == 'pollinations':
+            self.logger.debug("Using Pollinations (no API key required for free tier)")
+            return {
+                'provider': target_provider,
+                'api_key': None,
+                'timeout': function_config.get('timeout', 30),
+                'retry_count': function_config.get('retry_count', 3)
+            }
+        
+        self.logger.warning(f"No API key available for {target_provider}")
+        return {
+            'provider': target_provider,
+            'api_key': None,
+            'timeout': function_config.get('timeout', 30),
+            'retry_count': function_config.get('retry_count', 3)
+        }
+    
+    def set_function_api_key(self, function_name: str, provider: str, api_key: str):
+        """Set API key for a specific function."""
+        
+        # Initialize function_api_keys if not present
+        if not self._config.function_api_keys:
+            self._config.function_api_keys = self._get_default_function_keys()
+        
+        # Ensure function exists in config
+        if function_name not in self._config.function_api_keys:
+            self._config.function_api_keys[function_name] = self._get_default_function_config()
+        
+        # Set the function-specific API key
+        self._config.function_api_keys[function_name][f'{provider}_api_key'] = api_key
+        self.save_config(self._config)
+        self.logger.info(f"Set {provider} API key for {function_name}")
+    
+    def get_function_config(self, function_name: str) -> Dict[str, Any]:
+        """Get configuration for a specific function."""
+        
+        # Initialize function_api_keys if not present
+        if not self._config.function_api_keys:
+            self._config.function_api_keys = self._get_default_function_keys()
+            self.save_config(self._config)
+        
+        return self._config.function_api_keys.get(function_name, self._get_default_function_config())
+    
+    def _get_default_function_keys(self) -> Dict[str, Dict[str, Any]]:
+        """Get default function API key configuration."""
+        return {
+            'project_analyzer': self._get_default_function_config(),
+            'ai_reporter': self._get_default_function_config(),
+            'search_orchestrator': self._get_default_function_config()
+        }
+    
+    def _get_default_function_config(self) -> Dict[str, Any]:
+        """Get default configuration for a function."""
+        return {
+            'provider': self._config.api_provider,
+            'fallback_providers': ['openai', 'anthropic', 'google', 'zai'],
+            'timeout': 30,
+            'retry_count': 3
+        }
+    
+    def migrate_legacy_config(self):
+        """Migrate legacy configuration to new format."""
+        
+        # Initialize function_api_keys if not present
+        if not self._config.function_api_keys:
+            self._config.function_api_keys = self._get_default_function_keys()
+            
+            # Migrate existing global keys to function defaults
+            for function_name, function_config in self._config.function_api_keys.items():
+                provider = function_config.get('provider')
+                if provider and hasattr(self._config, f'{provider}_api_key'):
+                    api_key = getattr(self._config, f'{provider}_api_key')
+                    if api_key:
+                        function_config[f'{provider}_api_key'] = api_key
+        
+        # Set default Z.ai provider if not configured
+        if not hasattr(self._config, 'zai_api_key'):
+            self._config.zai_api_key = None
+        
+        # Save migrated configuration
+        self.save_config(self._config)
+        self.logger.info("Configuration migrated to new format")
     
     def add_to_history(self, entry: Dict[str, Any]):
         """Add entry to command history."""
@@ -408,6 +615,8 @@ class ConfigManager:
             config_dict['google_api_key'] = '***hidden***'
         if config_dict.get('pollinations_api_key'):
             config_dict['pollinations_api_key'] = '***hidden***'
+        if config_dict.get('zai_api_key'):
+            config_dict['zai_api_key'] = '***hidden***'
         if config_dict.get('github_token'):
             config_dict['github_token'] = '***hidden***'
         
@@ -424,6 +633,7 @@ class ConfigManager:
             config_dict.pop('anthropic_api_key', None)
             config_dict.pop('google_api_key', None)
             config_dict.pop('pollinations_api_key', None)
+            config_dict.pop('zai_api_key', None)
             config_dict.pop('github_token', None)
             
             with open(export_path, 'w') as f:
