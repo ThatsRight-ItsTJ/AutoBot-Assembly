@@ -15,7 +15,7 @@ from pathlib import Path
 from ..analysis.astgrep_client import StructureAnalysis
 from ..search.tier1_packages import PackageResult
 from ..search.tier2_curated import RepositoryResult
-from ..search.tier3_discovery import SearchResult
+from ..search.tier3_discovery import DiscoveredRepository
 
 
 class ConflictSeverity(str, Enum):
@@ -72,38 +72,7 @@ class CompatibilityMatrix:
 class FrameworkCompatibilityChecker:
     """Analyze compatibility between discovered components."""
     
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
         
-        # Load compatibility database
-        self.compatibility_db = self._load_compatibility_database()
-        
-        # Framework ecosystem mappings
-        self.framework_ecosystems = {
-            'python': {
-                'web': ['fastapi', 'flask', 'django', 'starlette', 'tornado'],
-                'async': ['asyncio', 'aiohttp', 'uvloop', 'trio'],
-                'database': ['sqlalchemy', 'django-orm', 'peewee', 'tortoise-orm'],
-                'testing': ['pytest', 'unittest', 'nose2', 'testify'],
-                'serialization': ['pydantic', 'marshmallow', 'cerberus', 'jsonschema']
-            },
-            'javascript': {
-                'frontend': ['react', 'vue', 'angular', 'svelte', 'ember'],
-                'backend': ['express', 'koa', 'fastify', 'hapi', 'nest'],
-                'testing': ['jest', 'mocha', 'jasmine', 'cypress', 'playwright'],
-                'bundling': ['webpack', 'rollup', 'parcel', 'vite', 'esbuild'],
-                'state': ['redux', 'mobx', 'zustand', 'recoil', 'jotai']
-            },
-            'java': {
-                'web': ['spring-boot', 'spring-mvc', 'jersey', 'dropwizard'],
-                'persistence': ['hibernate', 'jpa', 'mybatis', 'jooq'],
-                'testing': ['junit', 'testng', 'mockito', 'wiremock'],
-                'build': ['maven', 'gradle', 'ant', 'sbt']
-            }
-        }
-        
-        # Known incompatibilities
-        self.known_conflicts = {
             'python': [
                 {
                     'frameworks': ['django', 'fastapi'],
@@ -153,7 +122,7 @@ class FrameworkCompatibilityChecker:
         Analyze compatibility between discovered components.
         
         Args:
-            components: List of discovered components (PackageResult, RepositoryResult, SearchResult)
+            components: List of discovered components (PackageResult, RepositoryResult, DiscoveredRepository)
             language: Target programming language
             
         Returns:

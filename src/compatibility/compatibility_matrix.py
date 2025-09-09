@@ -15,7 +15,7 @@ from .license_analyzer import LicenseAnalyzer, LicenseAnalysis
 from ..analysis.unified_scorer import UnifiedFileScorer, CompositeFileScore
 from ..search.tier1_packages import PackageResult
 from ..search.tier2_curated import RepositoryResult
-from ..search.tier3_discovery import SearchResult
+from ..search.tier3_discovery import DiscoveredRepository
 
 
 @dataclass

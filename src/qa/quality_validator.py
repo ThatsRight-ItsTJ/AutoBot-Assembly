@@ -14,7 +14,7 @@ from pathlib import Path
 import json
 import statistics
 
-from ..assembly.project_generator import GeneratedProject
+from ..assembly.generated_project import GeneratedProject
 from .integration_tester import IntegrationTestSuite
 
 

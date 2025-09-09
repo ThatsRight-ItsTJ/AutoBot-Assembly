@@ -10,9 +10,9 @@ import logging
 from typing import List, Dict, Optional, Set
 from dataclasses import dataclass
 
-from ..search.tier1_packages import PackageSearcher, PackageResult
-from ..search.tier2_curated import CuratedSearcher, CuratedCollection
-from ..search.tier3_discovery import GitHubDiscoverer, DiscoveredRepository
+from src.search.tier1_packages import PackageSearcher, PackageResult
+from src.search.tier2_curated import CuratedSearcher, CuratedCollection
+from src.search.tier3_discovery import GitHubDiscoverer, DiscoveredRepository
 
 
 @dataclass

@@ -13,7 +13,7 @@ from pathlib import Path
 import json
 import re
 
-from ..assembly.project_generator import GeneratedProject
+from ..assembly.generated_project import GeneratedProject
 from .quality_validator import ValidationResult
 
 

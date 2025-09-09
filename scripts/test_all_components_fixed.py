@@ -204,7 +204,7 @@ async def test_working_workflow():
         
         # Load project analyzer
         analyzer_path = src_dir / "orchestration" / "project_analyzer.py"
-        analyzer_module = load_module_from_path("project_analyzer_main", analyzer_path)
+        analyzer_module = load_module_from_path("project_analyzer", analyzer_path)
         ProjectAnalyzer = analyzer_module.ProjectAnalyzer
         
         print("✅ Workflow components loaded successfully")

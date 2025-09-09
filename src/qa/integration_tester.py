@@ -15,7 +15,7 @@ from pathlib import Path
 import json
 import shutil
 
-from ..assembly.project_generator import GeneratedProject
+from ..assembly.generated_project import GeneratedProject
 
 
 class TestStatus(str, Enum):
@@ -705,18 +705,11 @@ class IntegrationTester:
 
 # Example usage
 async def main():
-    from ..assembly.project_generator import ProjectGenerator, ProjectType
-    from ..assembly.code_integrator import IntegrationResult, IntegrationStatus
+    from ..assembly.project_generator import ProjectGenerator
+    from ..assembly.generated_project import ProjectType
     
     # Create a mock integration result for testing
-    integration_result = IntegrationResult(
-        status=IntegrationStatus.SUCCESS,
-        integrated_files=["main.py", "src/module.py"],
-        import_conflicts=[],
-        config_conflicts=[],
-        integration_path="/tmp/test_integration",
-        generated_files=["README.md"]
-    )
+    integration_result = None  # Placeholder
     
     # Create a mock generated project
     generator = ProjectGenerator()

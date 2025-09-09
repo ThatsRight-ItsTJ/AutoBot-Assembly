@@ -33,12 +33,13 @@ except ImportError:
 
 from ..orchestration.project_analyzer import ProjectAnalyzer
 from ..orchestration.search_orchestrator import SearchOrchestrator
-from ..analysis.unified_scorer import UnifiedScorer
-from ..compatibility.compatibility_matrix import CompatibilityMatrix
+from ..analysis.unified_scorer import UnifiedFileScorer
+from ..compatibility.compatibility_matrix import CompatibilityMatrixGenerator
 from ..assembly.repository_cloner import RepositoryCloner
 from ..assembly.file_extractor import FileExtractor
 from ..assembly.code_integrator import CodeIntegrator
-from ..assembly.project_generator import ProjectGenerator, ProjectType
+from ..assembly.project_generator import ProjectGenerator
+from ..orchestration.project_analyzer import ProjectType
 from ..qa.integration_tester import IntegrationTester
 from ..qa.quality_validator import QualityValidator
 from ..qa.documentation_generator import DocumentationGenerator, DocType
@@ -78,8 +79,8 @@ class AutoBotCLI:
         # Initialize core components
         self.project_analyzer = ProjectAnalyzer()
         self.search_orchestrator = SearchOrchestrator()
-        self.unified_scorer = UnifiedScorer()
-        self.compatibility_matrix = CompatibilityMatrix()
+        self.unified_scorer = UnifiedFileScorer()
+        self.compatibility_matrix = CompatibilityMatrixGenerator()
         self.repository_cloner = RepositoryCloner()
         self.file_extractor = FileExtractor()
         self.code_integrator = CodeIntegrator()
