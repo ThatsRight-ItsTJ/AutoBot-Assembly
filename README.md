@@ -195,50 +195,6 @@ source venv/bin/activate && python -m src.web.web_server
 
 Visit `http://localhost:5000` in your browser for the interactive web interface.
 
-### REST API
-
-Start the API server:
-```bash
-source venv/bin/activate && python -m src.api.api_server
-```
-
-API will be available at `http://localhost:8000`
-
-#### Example API Usage:
-```bash
-curl -X POST "http://localhost:8000/analyze" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Create a todo app with React and Node.js"}'
-```
-
-### Python Library Usage
-
-```python
-import asyncio
-from src.orchestration.project_analyzer import ProjectAnalyzer
-from src.orchestration.search_orchestrator import SearchOrchestrator
-
-async def generate_project():
-    # Analyze project requirements
-    analyzer = ProjectAnalyzer(api_provider="openai")  # or "anthropic", "google", "pollinations"
-    analysis = await analyzer.analyze_prompt("Create a Python web scraper")
-    
-    # Search for relevant packages and repositories
-    orchestrator = SearchOrchestrator()
-    search_results = await orchestrator.orchestrate_search(
-        analysis.project_description,
-        analysis.recommended_language
-    )
-    
-    print(f"Project: {analysis.project_name}")
-    print(f"Language: {analysis.recommended_language}")
-    print(f"Components: {len(analysis.required_components)}")
-    print(f"Packages found: {len(search_results.tier1_results)}")
-
-# Run the example
-asyncio.run(generate_project())
-```
-
 ## 🏗️ System Architecture
 
 ### Core Components
@@ -279,7 +235,6 @@ asyncio.run(generate_project())
 
 - **CLI Interface** (`src/cli/`) - Interactive, wizard, and batch modes
 - **Web Interface** (`src/web/`) - Real-time web UI with WebSocket support
-- **REST API** (`src/api/`) - Full API with authentication and rate limiting
 
 ## 📋 Examples
 
