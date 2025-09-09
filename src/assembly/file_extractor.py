@@ -1,497 +1,494 @@
+#!/usr/bin/env python3
 """
 File Extractor
 
-Selective file extraction based on analysis results and integration requirements.
+Extracts and processes files from cloned repositories for integration.
 """
 
+import os
 import asyncio
 import logging
-import shutil
-from typing import Dict, List, Optional, Any, Set
-from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
+from typing import List, Dict, Any, Optional, Set
+from dataclasses import dataclass
 import fnmatch
+import mimetypes
 import json
 
-from .repository_cloner import CloneResult
-from ..analysis.unified_scorer import CompositeFileScore
+# Use absolute imports
+import sys
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
 
-
-class ExtractionStatus(str, Enum):
-    SUCCESS = "success"
-    FAILED = "failed"
-    SKIPPED = "skipped"
-    FILTERED = "filtered"
+from src.analysis.unified_scorer import CompositeFileScore, UnifiedFileScorer
 
 
 @dataclass
 class ExtractedFile:
-    original_path: str
-    extracted_path: str
+    """Represents an extracted file with metadata."""
+    file_path: str
+    relative_path: str
+    content: str
     file_type: str
+    language: str
     size_bytes: int
-    quality_score: Optional[float]
-    extraction_reason: str
+    quality_score: Optional[CompositeFileScore] = None
+    is_main_file: bool = False
+    is_config_file: bool = False
+    is_test_file: bool = False
+    dependencies: List[str] = None
 
 
 @dataclass
 class ExtractionResult:
+    """Result of file extraction from a repository."""
     repository_name: str
-    total_files_found: int
-    files_extracted: int
-    files_skipped: int
+    repository_path: str
     extracted_files: List[ExtractedFile]
-    extraction_path: str
-    status: ExtractionStatus
-    error_message: Optional[str] = None
+    total_files_found: int
+    extraction_time_seconds: float
+    language_distribution: Dict[str, int]
+    file_type_distribution: Dict[str, int]
+    main_files: List[ExtractedFile]
+    config_files: List[ExtractedFile]
+    test_files: List[ExtractedFile]
 
 
 class FileExtractor:
-    """Selective file extraction based on analysis and requirements."""
+    """Extracts relevant files from cloned repositories."""
     
-    def __init__(self, extraction_base_dir: Optional[str] = None):
+    def __init__(self):
         self.logger = logging.getLogger(__name__)
+        self.file_scorer = UnifiedFileScorer()
         
-        # Set up extraction directory
-        if extraction_base_dir:
-            self.extraction_base_dir = Path(extraction_base_dir)
-        else:
-            self.extraction_base_dir = Path("extracted_components")
-        
-        self.extraction_base_dir.mkdir(parents=True, exist_ok=True)
-        
-        # File type patterns
-        self.code_file_patterns = {
+        # File patterns to include/exclude
+        self.include_patterns = {
             'python': ['*.py', '*.pyx', '*.pyi'],
             'javascript': ['*.js', '*.jsx', '*.ts', '*.tsx', '*.mjs'],
-            'java': ['*.java'],
-            'go': ['*.go'],
-            'rust': ['*.rs'],
-            'c': ['*.c', '*.h'],
-            'cpp': ['*.cpp', '*.cxx', '*.cc', '*.hpp', '*.hxx'],
-            'php': ['*.php'],
-            'ruby': ['*.rb'],
-            'csharp': ['*.cs']
+            'java': ['*.java', '*.kt', '*.scala'],
+            'config': ['*.json', '*.yaml', '*.yml', '*.toml', '*.ini', '*.cfg', '*.conf'],
+            'docs': ['*.md', '*.rst', '*.txt', 'README*', 'CHANGELOG*', 'LICENSE*'],
+            'build': ['requirements.txt', 'package.json', 'pom.xml', 'build.gradle', 'Dockerfile', 'docker-compose.yml']
         }
         
-        # Configuration file patterns
-        self.config_file_patterns = [
-            'requirements.txt', 'setup.py', 'setup.cfg', 'pyproject.toml',
-            'package.json', 'package-lock.json', 'yarn.lock',
-            'pom.xml', 'build.gradle', 'gradle.properties',
-            'Cargo.toml', 'Cargo.lock',
-            'Gemfile', 'Gemfile.lock',
-            'composer.json', 'composer.lock',
-            '*.csproj', '*.sln',
-            'Makefile', 'CMakeLists.txt',
-            'Dockerfile', 'docker-compose.yml',
-            '.env', '.env.example', 'config.json', 'config.yaml'
-        ]
-        
-        # Documentation patterns
-        self.doc_file_patterns = [
-            'README*', 'CHANGELOG*', 'LICENSE*', 'CONTRIBUTING*',
-            '*.md', '*.rst', '*.txt'
-        ]
-        
-        # Files/directories to always exclude
         self.exclude_patterns = [
-            '.git', '.svn', '.hg',
-            '__pycache__', '*.pyc', '*.pyo',
-            'node_modules', '.npm',
-            'target', 'build', 'dist',
-            '.idea', '.vscode',
-            '*.log', '*.tmp', '*.cache',
-            '.pytest_cache', '.coverage',
-            'venv', 'env', '.env'
+            '*/.*',  # Hidden files/directories
+            '*/__pycache__/*',
+            '*/node_modules/*',
+            '*/venv/*',
+            '*/env/*',
+            '*/.git/*',
+            '*/.svn/*',
+            '*/build/*',
+            '*/dist/*',
+            '*/target/*',
+            '*.pyc',
+            '*.pyo',
+            '*.class',
+            '*.o',
+            '*.so',
+            '*.dll',
+            '*.exe'
         ]
         
-        # Quality score thresholds
-        self.min_quality_score = 0.4
-        self.preferred_quality_score = 0.7
+        # Main file indicators
+        self.main_file_patterns = [
+            'main.py', 'app.py', 'run.py', 'server.py', 'cli.py',
+            'index.js', 'app.js', 'server.js', 'main.js',
+            'Main.java', 'Application.java', 'App.java'
+        ]
+        
+        # Test file patterns
+        self.test_file_patterns = [
+            'test_*.py', '*_test.py', 'tests.py',
+            '*.test.js', '*.spec.js', 'test*.js',
+            '*Test.java', '*Tests.java'
+        ]
+        
+        # Config file patterns
+        self.config_file_patterns = [
+            'config.py', 'settings.py', 'configuration.py',
+            'config.js', 'config.json', 'package.json',
+            'application.properties', 'application.yml'
+        ]
     
-    async def extract_files(self, 
-                          clone_results: Dict[str, CloneResult],
-                          file_scores: Optional[Dict[str, Dict[str, CompositeFileScore]]] = None,
-                          language: str = "python",
-                          extraction_criteria: Optional[Dict[str, Any]] = None) -> Dict[str, ExtractionResult]:
+    async def extract_files(
+        self,
+        clone_results: List[Any],
+        language: str = "python",
+        extraction_criteria: Optional[Dict[str, Any]] = None
+    ) -> List[ExtractionResult]:
         """
-        Extract files from cloned repositories based on analysis and criteria.
+        Extract files from cloned repositories.
         
         Args:
-            clone_results: Results from repository cloning
-            file_scores: File quality scores from analysis
-            language: Target programming language
-            extraction_criteria: Custom extraction criteria
+            clone_results: List of CloneResult objects
+            language: Primary programming language to focus on
+            extraction_criteria: Additional criteria for extraction
             
         Returns:
-            Dict mapping repository names to extraction results
+            List of ExtractionResult objects
         """
         
-        self.logger.info(f"Extracting files from {len(clone_results)} repositories...")
+        criteria = extraction_criteria or {}
+        max_files_per_repo = criteria.get('max_files_per_repo', 50)
+        min_file_size = criteria.get('min_file_size_bytes', 10)
+        max_file_size = criteria.get('max_file_size_bytes', 1024 * 1024)  # 1MB
         
-        # Set default extraction criteria
-        if extraction_criteria is None:
-            extraction_criteria = {
-                'include_code': True,
-                'include_config': True,
-                'include_docs': True,
-                'min_quality_score': self.min_quality_score,
-                'max_files_per_repo': 100
-            }
+        extraction_results = []
         
-        extraction_results = {}
-        
-        for repo_name, clone_result in clone_results.items():
-            if clone_result.status.value != 'success':
-                extraction_results[repo_name] = ExtractionResult(
-                    repository_name=repo_name,
-                    total_files_found=0,
-                    files_extracted=0,
-                    files_skipped=0,
-                    extracted_files=[],
-                    extraction_path="",
-                    status=ExtractionStatus.SKIPPED,
-                    error_message="Repository clone failed"
-                )
-                continue
-            
+        for clone_result in clone_results:
             try:
-                result = await self._extract_repository_files(
-                    repo_name, clone_result, file_scores, language, extraction_criteria
+                self.logger.info(f"Extracting files from {clone_result.repository_name}")
+                
+                start_time = asyncio.get_event_loop().time()
+                
+                # Get file patterns for the language
+                include_patterns = self._get_include_patterns(language)
+                
+                # Find all relevant files
+                all_files = self._find_files(
+                    clone_result.local_path,
+                    include_patterns,
+                    max_files_per_repo
                 )
-                extraction_results[repo_name] = result
+                
+                # Extract and process files
+                extracted_files = []
+                language_dist = {}
+                file_type_dist = {}
+                
+                for file_path in all_files:
+                    try:
+                        # Check file size
+                        file_size = os.path.getsize(file_path)
+                        if file_size < min_file_size or file_size > max_file_size:
+                            continue
+                        
+                        # Read file content
+                        content = self._read_file_safely(file_path)
+                        if not content:
+                            continue
+                        
+                        # Determine file metadata
+                        relative_path = os.path.relpath(file_path, clone_result.local_path)
+                        file_type = self._determine_file_type(file_path)
+                        file_language = self._determine_file_language(file_path, content)
+                        
+                        # Create extracted file object
+                        extracted_file = ExtractedFile(
+                            file_path=file_path,
+                            relative_path=relative_path,
+                            content=content,
+                            file_type=file_type,
+                            language=file_language,
+                            size_bytes=file_size,
+                            is_main_file=self._is_main_file(relative_path),
+                            is_config_file=self._is_config_file(relative_path),
+                            is_test_file=self._is_test_file(relative_path),
+                            dependencies=self._extract_dependencies(content, file_language)
+                        )
+                        
+                        # Score the file quality
+                        try:
+                            quality_score = await self.file_scorer.score_file(file_path, content)
+                            extracted_file.quality_score = quality_score
+                        except Exception as e:
+                            self.logger.warning(f"Failed to score file {file_path}: {e}")
+                        
+                        extracted_files.append(extracted_file)
+                        
+                        # Update distributions
+                        language_dist[file_language] = language_dist.get(file_language, 0) + 1
+                        file_type_dist[file_type] = file_type_dist.get(file_type, 0) + 1
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Failed to process file {file_path}: {e}")
+                        continue
+                
+                end_time = asyncio.get_event_loop().time()
+                extraction_time = end_time - start_time
+                
+                # Categorize files
+                main_files = [f for f in extracted_files if f.is_main_file]
+                config_files = [f for f in extracted_files if f.is_config_file]
+                test_files = [f for f in extracted_files if f.is_test_file]
+                
+                # Create extraction result
+                extraction_result = ExtractionResult(
+                    repository_name=clone_result.repository_name,
+                    repository_path=clone_result.local_path,
+                    extracted_files=extracted_files,
+                    total_files_found=len(all_files),
+                    extraction_time_seconds=extraction_time,
+                    language_distribution=language_dist,
+                    file_type_distribution=file_type_dist,
+                    main_files=main_files,
+                    config_files=config_files,
+                    test_files=test_files
+                )
+                
+                extraction_results.append(extraction_result)
+                
+                self.logger.info(
+                    f"Extracted {len(extracted_files)} files from {clone_result.repository_name} "
+                    f"in {extraction_time:.2f}s"
+                )
                 
             except Exception as e:
-                self.logger.error(f"File extraction failed for {repo_name}: {e}")
-                extraction_results[repo_name] = ExtractionResult(
-                    repository_name=repo_name,
-                    total_files_found=0,
-                    files_extracted=0,
-                    files_skipped=0,
-                    extracted_files=[],
-                    extraction_path="",
-                    status=ExtractionStatus.FAILED,
-                    error_message=str(e)
-                )
+                self.logger.error(f"Failed to extract from {clone_result.repository_name}: {e}")
+                continue
         
         return extraction_results
     
-    async def _extract_repository_files(self, 
-                                      repo_name: str,
-                                      clone_result: CloneResult,
-                                      file_scores: Optional[Dict[str, Dict[str, CompositeFileScore]]],
-                                      language: str,
-                                      extraction_criteria: Dict[str, Any]) -> ExtractionResult:
-        """Extract files from a single repository."""
+    def _get_include_patterns(self, language: str) -> List[str]:
+        """Get file patterns to include based on language."""
         
-        repo_path = Path(clone_result.local_path)
-        extraction_path = self.extraction_base_dir / repo_name
+        patterns = []
         
-        # Create extraction directory
-        if extraction_path.exists():
-            shutil.rmtree(extraction_path)
-        extraction_path.mkdir(parents=True)
+        # Add language-specific patterns
+        if language.lower() in self.include_patterns:
+            patterns.extend(self.include_patterns[language.lower()])
         
-        # Find all relevant files
-        candidate_files = self._find_candidate_files(repo_path, language)
+        # Always include config, docs, and build files
+        patterns.extend(self.include_patterns['config'])
+        patterns.extend(self.include_patterns['docs'])
+        patterns.extend(self.include_patterns['build'])
         
-        # Get file scores for this repository
-        repo_file_scores = file_scores.get(repo_name, {}) if file_scores else {}
-        
-        # Filter and prioritize files
-        selected_files = self._select_files_for_extraction(
-            candidate_files, repo_file_scores, extraction_criteria
-        )
-        
-        # Extract selected files
-        extracted_files = []
-        files_skipped = 0
-        
-        for file_info in selected_files:
-            try:
-                extracted_file = await self._extract_single_file(
-                    file_info, repo_path, extraction_path
-                )
-                if extracted_file:
-                    extracted_files.append(extracted_file)
-                else:
-                    files_skipped += 1
-            except Exception as e:
-                self.logger.warning(f"Failed to extract {file_info['path']}: {e}")
-                files_skipped += 1
-        
-        return ExtractionResult(
-            repository_name=repo_name,
-            total_files_found=len(candidate_files),
-            files_extracted=len(extracted_files),
-            files_skipped=files_skipped,
-            extracted_files=extracted_files,
-            extraction_path=str(extraction_path),
-            status=ExtractionStatus.SUCCESS if extracted_files else ExtractionStatus.FILTERED
-        )
+        return patterns
     
-    def _find_candidate_files(self, repo_path: Path, language: str) -> List[Dict[str, Any]]:
-        """Find all candidate files for extraction."""
+    def _find_files(
+        self,
+        root_path: str,
+        include_patterns: List[str],
+        max_files: int
+    ) -> List[str]:
+        """Find files matching the include patterns."""
         
-        candidate_files = []
+        found_files = []
         
-        # Get file patterns for the language
-        code_patterns = self.code_file_patterns.get(language.lower(), ['*'])
-        all_patterns = code_patterns + self.config_file_patterns + self.doc_file_patterns
+        for root, dirs, files in os.walk(root_path):
+            # Skip excluded directories
+            dirs[:] = [d for d in dirs if not self._is_excluded_path(os.path.join(root, d))]
+            
+            for file in files:
+                file_path = os.path.join(root, file)
+                
+                # Check if file is excluded
+                if self._is_excluded_path(file_path):
+                    continue
+                
+                # Check if file matches include patterns
+                if self._matches_patterns(file, include_patterns):
+                    found_files.append(file_path)
+                    
+                    if len(found_files) >= max_files:
+                        return found_files
         
-        for file_path in repo_path.rglob('*'):
-            if not file_path.is_file():
-                continue
-            
-            # Skip excluded files/directories
-            if self._should_exclude_file(file_path, repo_path):
-                continue
-            
-            # Check if file matches any pattern
-            file_type = self._classify_file(file_path, code_patterns)
-            if file_type == 'unknown':
-                continue
-            
-            relative_path = file_path.relative_to(repo_path)
-            
-            candidate_files.append({
-                'path': file_path,
-                'relative_path': str(relative_path),
-                'file_type': file_type,
-                'size_bytes': file_path.stat().st_size
-            })
-        
-        return candidate_files
+        return found_files
     
-    def _should_exclude_file(self, file_path: Path, repo_path: Path) -> bool:
-        """Check if file should be excluded."""
-        
-        relative_path = file_path.relative_to(repo_path)
-        path_str = str(relative_path)
+    def _is_excluded_path(self, path: str) -> bool:
+        """Check if a path should be excluded."""
         
         for pattern in self.exclude_patterns:
-            if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(file_path.name, pattern):
+            if fnmatch.fnmatch(path, pattern):
                 return True
-            
-            # Check if any parent directory matches exclude pattern
-            for parent in relative_path.parents:
-                if fnmatch.fnmatch(str(parent), pattern):
-                    return True
         
         return False
     
-    def _classify_file(self, file_path: Path, code_patterns: List[str]) -> str:
-        """Classify file type."""
+    def _matches_patterns(self, filename: str, patterns: List[str]) -> bool:
+        """Check if filename matches any of the patterns."""
         
-        file_name = file_path.name
+        for pattern in patterns:
+            if fnmatch.fnmatch(filename, pattern):
+                return True
         
-        # Check code files
-        for pattern in code_patterns:
-            if fnmatch.fnmatch(file_name, pattern):
-                return 'code'
-        
-        # Check config files
-        for pattern in self.config_file_patterns:
-            if fnmatch.fnmatch(file_name, pattern):
-                return 'config'
-        
-        # Check documentation files
-        for pattern in self.doc_file_patterns:
-            if fnmatch.fnmatch(file_name, pattern):
-                return 'documentation'
-        
-        return 'unknown'
+        return False
     
-    def _select_files_for_extraction(self, 
-                                   candidate_files: List[Dict[str, Any]],
-                                   file_scores: Dict[str, CompositeFileScore],
-                                   extraction_criteria: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Select files for extraction based on criteria and scores."""
-        
-        selected_files = []
-        
-        # Filter by file type criteria
-        for file_info in candidate_files:
-            file_type = file_info['file_type']
-            
-            if file_type == 'code' and not extraction_criteria.get('include_code', True):
-                continue
-            if file_type == 'config' and not extraction_criteria.get('include_config', True):
-                continue
-            if file_type == 'documentation' and not extraction_criteria.get('include_docs', True):
-                continue
-            
-            # Check quality score if available
-            relative_path = file_info['relative_path']
-            file_score = file_scores.get(relative_path)
-            
-            if file_score:
-                quality_score = file_score.overall_score
-                min_score = extraction_criteria.get('min_quality_score', self.min_quality_score)
-                
-                if quality_score < min_score:
-                    continue
-                
-                file_info['quality_score'] = quality_score
-                file_info['extraction_reason'] = f"Quality score: {quality_score:.2f}"
-            else:
-                file_info['quality_score'] = None
-                file_info['extraction_reason'] = f"File type: {file_type}"
-            
-            selected_files.append(file_info)
-        
-        # Sort by priority (quality score, then file type importance)
-        def file_priority(file_info):
-            quality_score = file_info.get('quality_score', 0.5)
-            file_type = file_info['file_type']
-            
-            # Type priority: code > config > documentation
-            type_priority = {'code': 3, 'config': 2, 'documentation': 1}.get(file_type, 0)
-            
-            return (quality_score, type_priority)
-        
-        selected_files.sort(key=file_priority, reverse=True)
-        
-        # Limit number of files if specified
-        max_files = extraction_criteria.get('max_files_per_repo', len(selected_files))
-        selected_files = selected_files[:max_files]
-        
-        return selected_files
-    
-    async def _extract_single_file(self, 
-                                 file_info: Dict[str, Any],
-                                 repo_path: Path,
-                                 extraction_path: Path) -> Optional[ExtractedFile]:
-        """Extract a single file to the extraction directory."""
-        
-        source_path = file_info['path']
-        relative_path = file_info['relative_path']
-        
-        # Create destination path (preserve directory structure)
-        dest_path = extraction_path / relative_path
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
+    def _read_file_safely(self, file_path: str) -> Optional[str]:
+        """Safely read file content."""
         
         try:
-            # Copy file
-            shutil.copy2(source_path, dest_path)
-            
-            return ExtractedFile(
-                original_path=str(source_path.relative_to(repo_path)),
-                extracted_path=str(dest_path.relative_to(self.extraction_base_dir)),
-                file_type=file_info['file_type'],
-                size_bytes=file_info['size_bytes'],
-                quality_score=file_info.get('quality_score'),
-                extraction_reason=file_info['extraction_reason']
-            )
-            
+            # Try UTF-8 first
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except UnicodeDecodeError:
+            try:
+                # Try with latin-1 as fallback
+                with open(file_path, 'r', encoding='latin-1') as f:
+                    return f.read()
+            except Exception:
+                return None
         except Exception as e:
-            self.logger.error(f"Failed to copy {source_path} to {dest_path}: {e}")
+            self.logger.warning(f"Failed to read {file_path}: {e}")
             return None
     
-    def get_extraction_summary(self, extraction_results: Dict[str, ExtractionResult]) -> Dict[str, Any]:
-        """Generate summary of extraction operations."""
+    def _determine_file_type(self, file_path: str) -> str:
+        """Determine the type of file."""
         
-        successful = [r for r in extraction_results.values() if r.status == ExtractionStatus.SUCCESS]
-        failed = [r for r in extraction_results.values() if r.status == ExtractionStatus.FAILED]
-        filtered = [r for r in extraction_results.values() if r.status == ExtractionStatus.FILTERED]
+        filename = os.path.basename(file_path).lower()
         
-        total_files_extracted = sum(r.files_extracted for r in successful)
-        total_files_found = sum(r.total_files_found for r in extraction_results.values())
+        if filename in ['readme.md', 'readme.txt', 'readme.rst', 'readme']:
+            return 'readme'
+        elif filename in ['license', 'license.txt', 'license.md']:
+            return 'license'
+        elif filename in ['requirements.txt', 'package.json', 'pom.xml', 'build.gradle']:
+            return 'dependencies'
+        elif filename in ['dockerfile', 'docker-compose.yml']:
+            return 'docker'
+        elif any(filename.endswith(ext) for ext in ['.py', '.js', '.java', '.kt']):
+            return 'source'
+        elif any(filename.endswith(ext) for ext in ['.json', '.yaml', '.yml', '.toml']):
+            return 'config'
+        elif any(filename.endswith(ext) for ext in ['.md', '.rst', '.txt']):
+            return 'documentation'
+        else:
+            return 'other'
+    
+    def _determine_file_language(self, file_path: str, content: str) -> str:
+        """Determine the programming language of a file."""
         
-        # File type distribution
-        file_type_counts = {'code': 0, 'config': 0, 'documentation': 0}
-        for result in successful:
-            for extracted_file in result.extracted_files:
-                file_type_counts[extracted_file.file_type] = file_type_counts.get(extracted_file.file_type, 0) + 1
+        extension = os.path.splitext(file_path)[1].lower()
         
-        return {
-            'total_repositories': len(extraction_results),
-            'successful_extractions': len(successful),
-            'failed_extractions': len(failed),
-            'filtered_extractions': len(filtered),
-            'total_files_found': total_files_found,
-            'total_files_extracted': total_files_extracted,
-            'extraction_rate': total_files_extracted / max(1, total_files_found),
-            'file_type_distribution': file_type_counts,
-            'average_files_per_repo': total_files_extracted / max(1, len(successful))
+        language_map = {
+            '.py': 'python',
+            '.pyx': 'python',
+            '.pyi': 'python',
+            '.js': 'javascript',
+            '.jsx': 'javascript',
+            '.ts': 'typescript',
+            '.tsx': 'typescript',
+            '.mjs': 'javascript',
+            '.java': 'java',
+            '.kt': 'kotlin',
+            '.scala': 'scala',
+            '.json': 'json',
+            '.yaml': 'yaml',
+            '.yml': 'yaml',
+            '.toml': 'toml',
+            '.md': 'markdown',
+            '.rst': 'restructuredtext',
+            '.txt': 'text'
         }
+        
+        return language_map.get(extension, 'unknown')
+    
+    def _is_main_file(self, relative_path: str) -> bool:
+        """Check if file is likely a main entry point."""
+        
+        filename = os.path.basename(relative_path).lower()
+        
+        for pattern in self.main_file_patterns:
+            if fnmatch.fnmatch(filename, pattern.lower()):
+                return True
+        
+        return False
+    
+    def _is_config_file(self, relative_path: str) -> bool:
+        """Check if file is a configuration file."""
+        
+        filename = os.path.basename(relative_path).lower()
+        
+        for pattern in self.config_file_patterns:
+            if fnmatch.fnmatch(filename, pattern.lower()):
+                return True
+        
+        return False
+    
+    def _is_test_file(self, relative_path: str) -> bool:
+        """Check if file is a test file."""
+        
+        filename = os.path.basename(relative_path).lower()
+        
+        for pattern in self.test_file_patterns:
+            if fnmatch.fnmatch(filename, pattern.lower()):
+                return True
+        
+        # Also check if it's in a test directory
+        path_parts = relative_path.lower().split(os.sep)
+        test_dirs = ['test', 'tests', 'testing', '__tests__', 'spec', 'specs']
+        
+        return any(part in test_dirs for part in path_parts)
+    
+    def _extract_dependencies(self, content: str, language: str) -> List[str]:
+        """Extract dependencies from file content."""
+        
+        dependencies = []
+        
+        try:
+            if language == 'python':
+                # Extract import statements
+                lines = content.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line.startswith('import ') or line.startswith('from '):
+                        # Simple extraction - could be more sophisticated
+                        if 'import ' in line:
+                            parts = line.split('import ')
+                            if len(parts) > 1:
+                                dep = parts[1].split()[0].split('.')[0]
+                                if dep and not dep.startswith('.'):
+                                    dependencies.append(dep)
+            
+            elif language == 'javascript':
+                # Extract require/import statements
+                lines = content.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if 'require(' in line or 'import ' in line:
+                        # Simple extraction
+                        if 'require(' in line:
+                            start = line.find("require('") + 9
+                            if start > 8:
+                                end = line.find("'", start)
+                                if end > start:
+                                    dep = line[start:end]
+                                    if not dep.startswith('.'):
+                                        dependencies.append(dep)
+        
+        except Exception as e:
+            self.logger.warning(f"Failed to extract dependencies: {e}")
+        
+        return list(set(dependencies))  # Remove duplicates
 
 
 # Example usage
 async def main():
-    from .repository_cloner import RepositoryCloner
-    from ..search.tier1_packages import PackageResult
-    from datetime import datetime
+    """Example usage of the file extractor."""
     
-    # Test with cloned repositories
-    cloner = RepositoryCloner()
+    # Mock clone result for testing
+    @dataclass
+    class MockCloneResult:
+        repository_name: str
+        local_path: str
+    
     extractor = FileExtractor()
     
-    # Create test repositories
-    test_repos = [
-        PackageResult(
-            name="requests",
-            repository_url="https://github.com/psf/requests",
-            description="HTTP library for Python",
-            downloads=1000000,
-            stars=50000,
-            last_updated=datetime.now(),
-            license="Apache-2.0",
-            quality_score=0.9,
-            language="python",
-            package_manager="pypi",
-            version="2.31.0",
-            dependencies_count=5
+    # This would normally come from the repository cloner
+    clone_results = [
+        MockCloneResult(
+            repository_name="test-repo",
+            local_path="/tmp/test-repo"
         )
     ]
     
-    print("Testing file extraction...")
-    
-    # Clone repositories
-    clone_results = await cloner.clone_repositories(test_repos)
-    
-    # Extract files
     extraction_results = await extractor.extract_files(
-        clone_results, 
+        clone_results=clone_results,
         language="python",
-        extraction_criteria={
-            'include_code': True,
-            'include_config': True,
-            'include_docs': True,
-            'max_files_per_repo': 20
-        }
+        extraction_criteria={'max_files_per_repo': 20}
     )
     
-    # Print results
-    print(f"\nExtraction Results:")
-    for repo_name, result in extraction_results.items():
-        print(f"  {repo_name}: {result.status.value}")
-        print(f"    Files found: {result.total_files_found}")
-        print(f"    Files extracted: {result.files_extracted}")
-        print(f"    Extraction path: {result.extraction_path}")
-        
-        if result.extracted_files:
-            print(f"    Top extracted files:")
-            for extracted_file in result.extracted_files[:5]:
-                print(f"      • {extracted_file.original_path} ({extracted_file.file_type})")
-                if extracted_file.quality_score:
-                    print(f"        Quality: {extracted_file.quality_score:.2f}")
-    
-    # Print summary
-    summary = extractor.get_extraction_summary(extraction_results)
-    print(f"\nSummary:")
-    print(f"  Extraction rate: {summary['extraction_rate']:.1%}")
-    print(f"  File types: {summary['file_type_distribution']}")
-    print(f"  Average files per repo: {summary['average_files_per_repo']:.1f}")
-    
-    # Cleanup
-    await cloner.cleanup_clones(clone_results)
-    print("Cleanup completed")
+    for result in extraction_results:
+        print(f"Extraction Results for {result.repository_name}:")
+        print(f"  Total files found: {result.total_files_found}")
+        print(f"  Files extracted: {len(result.extracted_files)}")
+        print(f"  Extraction time: {result.extraction_time_seconds:.2f}s")
+        print(f"  Language distribution: {result.language_distribution}")
+        print(f"  Main files: {len(result.main_files)}")
+        print(f"  Config files: {len(result.config_files)}")
+        print(f"  Test files: {len(result.test_files)}")
 
 
 if __name__ == "__main__":
-    import asyncio
     logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
