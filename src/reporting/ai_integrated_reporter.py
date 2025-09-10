@@ -39,6 +39,14 @@ try:
 except ImportError:
     ConfigManager = None
 
+# Import performance optimizer
+try:
+    from src.optimization.performance_optimizer import PerformanceOptimizer
+    PERFORMANCE_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    PERFORMANCE_OPTIMIZER_AVAILABLE = False
+    PerformanceOptimizer = None
+
 
 @dataclass
 class AIAnalysisResult:
@@ -97,6 +105,15 @@ class AIIntegratedReporter:
         
         # Function name for API key resolution
         self.function_name = 'ai_reporter'
+        
+        # Initialize performance optimizer if available
+        self.performance_optimizer = None
+        if PERFORMANCE_OPTIMIZER_AVAILABLE:
+            try:
+                self.performance_optimizer = PerformanceOptimizer()
+                self.logger.info("Performance optimizer initialized for AI reporting")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize performance optimizer: {e}")
     
     async def generate_comprehensive_report(
         self, 
@@ -109,6 +126,10 @@ class AIIntegratedReporter:
         
         # Generate different sections of the report
         sections = []
+        
+        # Start performance tracking if optimizer is available
+        if self.performance_optimizer:
+            start_time = time.time()
         
         # Header
         sections.append(self._generate_header(project_data))
@@ -133,6 +154,12 @@ class AIIntegratedReporter:
         
         # Footer
         sections.append(self._generate_footer())
+        
+        # Add performance metrics section if optimizer is available
+        if self.performance_optimizer:
+            execution_time = time.time() - start_time
+            perf_report = self.performance_optimizer.get_performance_report()
+            sections.append(self._generate_performance_section(perf_report, execution_time))
         
         # Combine all sections
         full_report = "\n\n".join(sections)
@@ -391,6 +418,32 @@ No external repositories were integrated in this project."""
 
 ---
 *© 2024 AutoBot Assembly Team - Revolutionizing Software Development with AI*"""
+    
+    def _generate_performance_section(self, perf_report: Dict[str, Any], execution_time: float) -> str:
+        """Generate performance metrics section."""
+        
+        summary = perf_report.get('summary', {})
+        
+        return f"""## ⚡ PERFORMANCE METRICS
+
+### Report Generation Performance
+- **Generation Time:** {execution_time:.2f} seconds
+- **Optimization Level:** {perf_report.get('configuration', {}).get('optimization_level', 'moderate')}
+- **Cache Strategy:** {perf_report.get('configuration', {}).get('cache_strategy', 'hybrid')}
+
+### System Performance
+- **Average Execution Time:** {summary.get('avg_execution_time', 0):.4f}s
+- **Cache Hit Rate:** {summary.get('overall_cache_hit_rate', 0):.1%}
+- **Memory Usage:** {summary.get('avg_memory_usage', 0):.1f}%
+- **CPU Usage:** {summary.get('avg_cpu_usage', 0):.1f}%
+- **Throughput:** {summary.get('avg_throughput', 0):.2f} operations/second
+
+### Optimization Effectiveness
+- **Performance Gain:** {perf_report.get('optimization_effectiveness', 0):.1%}
+- **Total Operations:** {summary.get('total_metrics', 0)}
+- **Cache Utilization:** {perf_report.get('cache_statistics', {}).get('memory_cache_size', 0)} items cached
+
+*Performance metrics collected by AutoBot Assembly Performance Optimizer*"""
     
     def _resolve_api_config(self, provider: str = None) -> Dict[str, Any]:
         """Resolve API configuration for the current function."""

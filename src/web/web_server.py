@@ -31,6 +31,7 @@ from ..qa.quality_validator import QualityValidator
 from ..qa.documentation_generator import DocumentationGenerator, DocType
 from .websocket_handler import WebSocketHandler
 from .result_visualizer import ResultVisualizer
+from ..optimization.performance_optimizer import PerformanceOptimizer, OptimizationLevel, CacheStrategy
 
 
 @dataclass
@@ -70,6 +71,7 @@ class WebServer:
         # Initialize components
         self.websocket_handler = WebSocketHandler(self.socketio)
         self.result_visualizer = ResultVisualizer()
+        self.performance_optimizer = PerformanceOptimizer()
         
         # Core AutoBot components
         self.project_analyzer = ProjectAnalyzer()
@@ -202,6 +204,68 @@ class WebServer:
                     as_attachment=True,
                     download_name=f"{project_name}.zip"
                 )
+        
+        @self.app.get("/api/v1/optimization/status")
+        async def get_optimization_status(
+            credentials: HTTPAuthorizationCredentials = Depends(self.security)
+        ):
+            """Get optimization status."""
+            
+            if not await self.auth_manager.verify_token(credentials.credentials):
+                raise HTTPException(status_code=401, detail="Invalid authentication token")
+            
+            cache_stats = self.performance_optimizer.get_cache_statistics()
+            
+            return {
+                "optimization_level": self.performance_optimizer.optimization_level.value,
+                "cache_strategy": self.performance_optimizer.cache_strategy.value,
+                "parallel_enabled": self.performance_optimizer.parallel_enabled,
+                "max_workers": self.performance_optimizer.max_workers,
+                "cache_statistics": cache_stats
+            }
+        
+        @self.app.post("/api/v1/optimization/configure")
+        async def configure_optimization(
+            request: dict,
+            credentials: HTTPAuthorizationCredentials = Depends(self.security)
+        ):
+            """Configure optimization settings."""
+            
+            if not await self.auth_manager.verify_token(credentials.credentials):
+                raise HTTPException(status_code=401, detail="Invalid authentication token")
+            
+            if 'optimization_level' in request:
+                level = OptimizationLevel(request['optimization_level'])
+                self.performance_optimizer.set_optimization_level(level)
+            
+            if 'cache_strategy' in request:
+                strategy = CacheStrategy(request['cache_strategy'])
+                self.performance_optimizer.set_cache_strategy(strategy)
+            
+            return {"message": "Optimization settings updated"}
+        
+        @self.app.get("/api/v1/optimization/report")
+        async def get_performance_report(
+            credentials: HTTPAuthorizationCredentials = Depends(self.security)
+        ):
+            """Get performance report."""
+            
+            if not await self.auth_manager.verify_token(credentials.credentials):
+                raise HTTPException(status_code=401, detail="Invalid authentication token")
+            
+            return self.performance_optimizer.get_performance_report()
+        
+        @self.app.delete("/api/v1/optimization/cache")
+        async def clear_optimization_cache(
+            credentials: HTTPAuthorizationCredentials = Depends(self.security)
+        ):
+            """Clear optimization cache."""
+            
+            if not await self.auth_manager.verify_token(credentials.credentials):
+                raise HTTPException(status_code=401, detail="Invalid authentication token")
+            
+            self.performance_optimizer.clear_cache()
+            return {"message": "Optimization cache cleared"}
     
     def _register_socketio_events(self):
         """Register SocketIO events."""
@@ -264,6 +328,13 @@ class WebServer:
             # Phase 2: Search for components
             await self._update_session_progress(session_id, 'searching', 25, 'Searching for components...')
             
+            # Apply performance optimization to search if enabled
+            if hasattr(request, 'enable_optimization') and request.enable_optimization:
+                # Optimize search orchestration
+                search_components = self.performance_optimizer.optimize_component_analysis([
+                    self._create_mock_component(comp) for comp in analysis_result.required_components[:5]
+                ])
+            
             search_results = await self.search_orchestrator.orchestrate_search(
                 analysis_result, max_results_per_tier=10
             )
@@ -294,6 +365,11 @@ class WebServer:
             # Phase 5: Complete
             await self._update_session_progress(session_id, 'complete', 100, 'Project ready!')
             
+            # Generate performance metrics if optimization was used
+            performance_metrics = None
+            if hasattr(request, 'enable_optimization') and request.enable_optimization:
+                performance_metrics = self.performance_optimizer.get_performance_report()
+            
             # Store results
             self.session_results[session_id] = {
                 'generated_project': {
@@ -319,7 +395,8 @@ class WebServer:
                     'overall_score': quality_score,
                     'test_results': test_results
                 },
-                'completion_time': time.time()
+                'completion_time': time.time(),
+                'performance_metrics': performance_metrics
             }
             
             # Update session status
@@ -338,6 +415,23 @@ class WebServer:
             
             # Emit error
             await self.websocket_handler.emit_error(session_id, str(e))
+    
+    def _create_mock_component(self, component_name: str):
+        """Create mock component for optimization testing."""
+        from ..optimization.performance_optimizer import CodeComponent
+        
+        return CodeComponent(
+            name=component_name,
+            type="component",
+            language="python",
+            code="",
+            file_path="",
+            imports=[],
+            dependencies=[],
+            line_start=0,
+            line_end=0,
+            context={}
+        )
     
     async def _update_session_progress(self, session_id: str, stage: str, progress: int, message: str):
         """Update session progress."""

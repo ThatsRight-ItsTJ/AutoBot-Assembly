@@ -23,6 +23,9 @@ except ImportError:
     # dotenv not available, environment variables will be read from system
     pass
 
+# Import JSON for performance reporting
+import json
+
 # Add the project root to Python path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -32,6 +35,7 @@ from src.orchestration.search_orchestrator import SearchOrchestrator
 from src.assembly.project_generator import ProjectGenerator
 from src.reporting.ai_integrated_reporter import AIIntegratedReporter
 from src.cli.config_manager import ConfigManager
+from src.optimization.performance_optimizer import PerformanceOptimizer, OptimizationLevel, CacheStrategy
 
 
 class AutoBotCLI:
@@ -50,6 +54,7 @@ class AutoBotCLI:
         self.orchestrator = SearchOrchestrator()
         self.generator = ProjectGenerator()
         self.reporter = AIIntegratedReporter(config_manager=self.config_manager)
+        self.performance_optimizer = PerformanceOptimizer()
         
         # Ensure completed_downloads directory exists
         self.completed_downloads_dir = project_root / "completed_downloads"
@@ -134,6 +139,33 @@ Examples:
             type=int,
             default=300,
             help='Timeout in seconds'
+        )
+        
+        # Performance optimization arguments
+        parser.add_argument(
+            '--optimization-level',
+            choices=['basic', 'moderate', 'aggressive'],
+            default='moderate',
+            help='Performance optimization level'
+        )
+        
+        parser.add_argument(
+            '--cache-strategy',
+            choices=['memory', 'disk', 'hybrid'],
+            default='hybrid',
+            help='Caching strategy for performance'
+        )
+        
+        parser.add_argument(
+            '--enable-optimization',
+            action='store_true',
+            help='Enable performance optimization'
+        )
+        
+        parser.add_argument(
+            '--performance-report',
+            action='store_true',
+            help='Generate performance report after completion'
         )
         
         return parser
@@ -479,6 +511,13 @@ if __name__ == '__main__':
         print(f"📝 Project: {args.prompt}")
         print(f"🔧 Language: {args.language}")
         print(f"📁 Output: {args.output}")
+        
+        # Configure performance optimization if enabled
+        if args.enable_optimization:
+            self.performance_optimizer.set_optimization_level(OptimizationLevel(args.optimization_level))
+            self.performance_optimizer.set_cache_strategy(CacheStrategy(args.cache_strategy))
+            print(f"⚡ Optimization: {args.optimization_level} level, {args.cache_strategy} cache")
+        
         print("-" * 50)
         
         try:
@@ -499,6 +538,15 @@ if __name__ == '__main__':
             
             # Step 2: Generate project
             print("🏗️ Generating project...")
+            
+            # Apply performance optimization to project generation if enabled
+            if args.enable_optimization:
+                print("⚡ Applying performance optimizations...")
+                # Optimize search results processing
+                search_results.packages = self.performance_optimizer.optimize_component_analysis([
+                    self._convert_package_to_component(pkg) for pkg in search_results.packages
+                ])
+            
             project_config = {
                 'name': self._extract_project_name(args.prompt),
                 'description': args.prompt,
@@ -580,6 +628,23 @@ if __name__ == '__main__':
             print(f"📋 Report: {report_path}")
             print(f"🗂️  Organized in: completed_downloads directory")
             
+            # Generate performance report if requested
+            if args.performance_report:
+                print("\n📊 Generating performance report...")
+                perf_report = self.performance_optimizer.get_performance_report()
+                perf_report_path = Path(generated_project.path) / "performance_report.json"
+                
+                with open(perf_report_path, 'w') as f:
+                    json.dump(perf_report, f, indent=2)
+                
+                print(f"📈 Performance report saved: {perf_report_path}")
+                
+                # Show key metrics
+                summary = perf_report['summary']
+                print(f"   Avg execution time: {summary['avg_execution_time']:.2f}s")
+                print(f"   Cache hit rate: {summary['overall_cache_hit_rate']:.1%}")
+                print(f"   Memory usage: {summary['avg_memory_usage']:.1f}%")
+            
             # Show key files
             print("\n📄 Key Files Generated:")
             for file_name in sorted(project_files.keys()):
@@ -591,6 +656,21 @@ if __name__ == '__main__':
                 import traceback
                 traceback.print_exc()
             sys.exit(1)
+    
+    def _convert_package_to_component(self, package) -> CodeComponent:
+        """Convert package result to code component for optimization."""
+        return CodeComponent(
+            name=package.name,
+            type="package",
+            language=getattr(package, 'language', 'python'),
+            code="",
+            file_path="",
+            imports=[],
+            dependencies=[],
+            line_start=0,
+            line_end=0,
+            context={'package_info': package}
+        )
     
     def _extract_components(self, prompt: str) -> list:
         """Extract components/features from the project prompt."""
@@ -639,6 +719,10 @@ if __name__ == '__main__':
                     break
                 elif user_input.lower() == 'help':
                     self._show_help()
+                elif user_input.lower() == 'optimize':
+                    self._show_optimization_help()
+                elif user_input.startswith('optimize '):
+                    await self._handle_optimization_command(user_input[9:].strip())
                 elif user_input.startswith('generate '):
                     prompt = user_input[9:].strip()
                     if prompt:
@@ -727,6 +811,83 @@ Examples:
 
 Note: All projects are saved to the completed_downloads directory
         """)
+    
+    def _show_optimization_help(self) -> None:
+        """Show optimization help."""
+        print("""
+Optimization commands:
+  optimize status           - Show current optimization status
+  optimize level <level>    - Set optimization level (basic/moderate/aggressive)
+  optimize cache <strategy> - Set cache strategy (memory/disk/hybrid)
+  optimize clear-cache      - Clear all caches
+  optimize report          - Show performance report
+  optimize recommendations - Get optimization recommendations
+
+Examples:
+  optimize level aggressive
+  optimize cache hybrid
+  optimize clear-cache
+        """)
+    
+    async def _handle_optimization_command(self, command: str):
+        """Handle optimization commands."""
+        parts = command.split()
+        
+        if not parts:
+            self._show_optimization_help()
+            return
+        
+        cmd = parts[0].lower()
+        
+        if cmd == 'status':
+            print(f"Current optimization settings:")
+            print(f"  Level: {self.performance_optimizer.optimization_level.value}")
+            print(f"  Cache Strategy: {self.performance_optimizer.cache_strategy.value}")
+            print(f"  Parallel Enabled: {self.performance_optimizer.parallel_enabled}")
+            print(f"  Max Workers: {self.performance_optimizer.max_workers}")
+            
+            cache_stats = self.performance_optimizer.get_cache_statistics()
+            print(f"  Memory Cache: {cache_stats['memory_cache']['size']}/{cache_stats['memory_cache']['max_size']}")
+            print(f"  Disk Cache Files: {cache_stats['disk_cache']['file_count']}")
+            
+        elif cmd == 'level' and len(parts) > 1:
+            level = parts[1].lower()
+            if level in ['basic', 'moderate', 'aggressive']:
+                self.performance_optimizer.set_optimization_level(OptimizationLevel(level))
+                print(f"Optimization level set to: {level}")
+            else:
+                print("Invalid level. Use: basic, moderate, or aggressive")
+                
+        elif cmd == 'cache' and len(parts) > 1:
+            strategy = parts[1].lower()
+            if strategy in ['memory', 'disk', 'hybrid']:
+                self.performance_optimizer.set_cache_strategy(CacheStrategy(strategy))
+                print(f"Cache strategy set to: {strategy}")
+            else:
+                print("Invalid strategy. Use: memory, disk, or hybrid")
+                
+        elif cmd == 'clear-cache':
+            self.performance_optimizer.clear_cache()
+            print("All caches cleared")
+            
+        elif cmd == 'report':
+            report = self.performance_optimizer.get_performance_report()
+            summary = report['summary']
+            print(f"Performance Report:")
+            print(f"  Total Operations: {summary['total_metrics']}")
+            print(f"  Avg Execution Time: {summary['avg_execution_time']:.4f}s")
+            print(f"  Avg Memory Usage: {summary['avg_memory_usage']:.1f}%")
+            print(f"  Cache Hit Rate: {summary['overall_cache_hit_rate']:.1%}")
+            print(f"  Avg Throughput: {summary['avg_throughput']:.2f} ops/s")
+            
+        elif cmd == 'recommendations':
+            recommendations = self.performance_optimizer.get_optimization_recommendations()
+            print("Optimization Recommendations:")
+            for rec in recommendations:
+                print(f"  • {rec}")
+                
+        else:
+            print("Unknown optimization command. Type 'optimize' for help.")
     
     def _extract_project_name(self, prompt: str) -> str:
         """Extract a project name from the prompt."""
