@@ -16,6 +16,7 @@ try:
     from .search.tier1_packages import PackageSearcher
     from .search.tier2_curated import CuratedSearcher
     from .search.tier3_discovery import GitHubDiscoverer
+    from .optimization.performance_optimizer import PerformanceOptimizer
 except ImportError:
     # Graceful fallback if some modules have issues
     pass
@@ -27,5 +28,6 @@ __all__ = [
     'AIIntegratedReporter',
     'PackageSearcher',
     'CuratedSearcher',
-    'GitHubDiscoverer'
+    'GitHubDiscoverer',
+    'PerformanceOptimizer'
 ]

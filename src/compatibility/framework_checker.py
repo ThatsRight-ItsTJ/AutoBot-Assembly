@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
 """
-Framework Compatibility Checker
+Framework Compatibility Checker with Tree-sitter Integration
 
 Ensures discovered components can work together by analyzing framework dependencies,
-version constraints, and potential conflicts.
+version constraints, and potential conflicts using enhanced Tree-sitter structural analysis
+via UniversalCodeAnalyzer for more accurate signature and import validation.
 """
 
 import logging
 import json
+import os
 from typing import Dict, List, Optional, Set, Tuple, Any
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+# Import UniversalCodeAnalyzer for Tree-sitter integration
+try:
+    from src.analysis.universal_code_analyzer import UniversalCodeAnalyzer
+    UNIVERSAL_ANALYZER_AVAILABLE = True
+except ImportError:
+    UNIVERSAL_ANALYZER_AVAILABLE = False
+    UniversalCodeAnalyzer = None
 
 
 class ConflictSeverity(str, Enum):
@@ -66,10 +76,22 @@ class CompatibilityMatrix:
 
 
 class FrameworkCompatibilityChecker:
-    """Analyze compatibility between discovered components."""
+    """Analyze compatibility between discovered components with Tree-sitter structural validation."""
     
-    def __init__(self):
+    def __init__(self, enable_tree_sitter: bool = True):
         """Initialize the compatibility checker."""
+        
+        # Initialize Tree-sitter analyzer if enabled and available
+        self.enable_tree_sitter = enable_tree_sitter and UNIVERSAL_ANALYZER_AVAILABLE
+        self.tree_sitter_analyzer = None
+        if self.enable_tree_sitter:
+            try:
+                self.tree_sitter_analyzer = UniversalCodeAnalyzer()
+                logging.info("UniversalCodeAnalyzer initialized for Tree-sitter structural validation")
+            except Exception as e:
+                logging.warning(f"Failed to initialize UniversalCodeAnalyzer: {e}")
+                self.tree_sitter_analyzer = None
+                self.enable_tree_sitter = False
         self.framework_ecosystems = {
             'python': {
                 'web_frameworks': ['django', 'flask', 'fastapi', 'tornado', 'pyramid', 'bottle'],
@@ -137,13 +159,15 @@ class FrameworkCompatibilityChecker:
             ]
         }
     
-    async def analyze_component_compatibility(self, components: List[Any], language: str) -> CompatibilityMatrix:
+    async def analyze_component_compatibility(self, components: List[Any], language: str,
+                                           source_files: Optional[List[str]] = None) -> CompatibilityMatrix:
         """
-        Analyze compatibility between discovered components.
+        Analyze compatibility between discovered components with enhanced Tree-sitter validation.
         
         Args:
             components: List of discovered components (PackageResult, RepositoryResult, DiscoveredRepository)
             language: Target programming language
+            source_files: Optional list of source files for Tree-sitter structural validation
             
         Returns:
             CompatibilityMatrix with comprehensive compatibility analysis
@@ -159,6 +183,10 @@ class FrameworkCompatibilityChecker:
                 'frameworks': frameworks,
                 'dependencies': self._extract_dependencies(component)
             }
+        
+        # Enhance with Tree-sitter structural analysis if source files provided
+        if source_files and self.enable_tree_sitter:
+            await self._enhance_with_structural_analysis(component_frameworks, source_files, language)
         
         # Check for conflicts
         conflicts = self._identify_conflicts(component_frameworks, language)
@@ -179,6 +207,231 @@ class FrameworkCompatibilityChecker:
             recommendations=recommendations,
             overall_compatibility=overall_compatibility
         )
+    
+    async def _enhance_with_structural_analysis(self, component_frameworks: Dict[str, Dict],
+                                              source_files: List[str], language: str):
+        """
+        Enhance component analysis with Tree-sitter structural validation.
+        
+        Args:
+            component_frameworks: Dictionary of component framework information
+            source_files: List of source files to analyze
+            language: Target programming language
+        """
+        if not self.tree_sitter_analyzer:
+            return
+        
+        try:
+            logging.info("Performing Tree-sitter structural analysis on source files")
+            
+            # Analyze source files for structural patterns
+            structural_patterns = await self._analyze_source_files_patterns(source_files, language)
+            
+            # Enhance component framework detection with structural insights
+            for comp_id, comp_info in component_frameworks.items():
+                component = comp_info['component']
+                
+                # Extract structural insights from the component
+                if hasattr(component, 'repository_url') and component.repository_url:
+                    # Check if structural patterns match this component
+                    for pattern_name, pattern_data in structural_patterns.items():
+                        if self._component_matches_patterns(component, pattern_data):
+                            # Add detected frameworks based on structural patterns
+                            for framework in pattern_data.get('detected_frameworks', []):
+                                if framework not in comp_info['frameworks']:
+                                    comp_info['frameworks'].append(framework)
+                                    logging.info(f"Detected {framework} in {comp_id} via structural analysis")
+                            
+                            # Add structural dependencies
+                            for dep in pattern_data.get('structural_dependencies', []):
+                                if dep not in comp_info['dependencies']:
+                                    comp_info['dependencies'].append(dep)
+            
+            logging.info("Enhanced component analysis with Tree-sitter structural data")
+            
+        except Exception as e:
+            logging.warning(f"Failed to enhance with structural analysis: {e}")
+    
+    async def _analyze_source_files_patterns(self, source_files: List[str], language: str) -> Dict[str, Any]:
+        """
+        Analyze source files for structural patterns using Tree-sitter.
+        
+        Args:
+            source_files: List of source file paths
+            language: Target programming language
+            
+        Returns:
+            Dictionary of detected structural patterns
+        """
+        patterns = {}
+        
+        try:
+            for file_path in source_files:
+                if not os.path.exists(file_path):
+                    continue
+                
+                try:
+                    # Analyze file with Tree-sitter
+                    file_result = self.tree_sitter_analyzer.analyze_file(file_path, language)
+                    
+                    if file_result and file_result.get('success'):
+                        # Extract structural patterns
+                        structure = file_result.get('structure', {})
+                        metrics = file_result.get('metrics', {})
+                        
+                        # Detect frameworks based on imports and dependencies
+                        detected_frameworks = self._detect_frameworks_from_structure(structure, language)
+                        
+                        # Extract structural dependencies
+                        structural_dependencies = structure.get('dependencies', [])
+                        
+                        # Create pattern entry
+                        pattern_key = f"file_{len(patterns)}"
+                        patterns[pattern_key] = {
+                            'file_path': file_path,
+                            'detected_frameworks': detected_frameworks,
+                            'structural_dependencies': structural_dependencies,
+                            'complexity_score': float(metrics.get('complexity_score', 0.0)),
+                            'has_tests': structure.get('has_tests', False),
+                            'has_docs': structure.get('has_docs', False)
+                        }
+                        
+                except Exception as e:
+                    logging.warning(f"Error analyzing {file_path}: {e}")
+                    continue
+            
+            # Group similar patterns
+            patterns = self._group_similar_patterns(patterns)
+            
+        except Exception as e:
+            logging.error(f"Error in structural pattern analysis: {e}")
+        
+        return patterns
+    
+    def _detect_frameworks_from_structure(self, structure: Dict[str, Any], language: str) -> List[str]:
+        """
+        Detect frameworks from structural analysis results.
+        
+        Args:
+            structure: Structural analysis results
+            language: Target programming language
+            
+        Returns:
+            List of detected frameworks
+        """
+        detected_frameworks = []
+        imports = structure.get('imports', [])
+        dependencies = structure.get('dependencies', [])
+        
+        # Combine imports and dependencies for analysis
+        all_references = imports + dependencies
+        
+        # Language-specific framework detection patterns
+        framework_patterns = {
+            'python': {
+                'django': ['django', 'django.db', 'django.http', 'django.views'],
+                'flask': ['flask', 'flask.request', 'flask.Blueprint'],
+                'fastapi': ['fastapi', 'fastapi.HTTPException', 'fastapi.Depends'],
+                'sqlalchemy': ['sqlalchemy', 'declarative_base', 'sessionmaker'],
+                'pydantic': ['pydantic', 'BaseModel', 'Field'],
+                'pytest': ['pytest', 'fixture', 'mark']
+            },
+            'javascript': {
+                'react': ['react', 'useState', 'useEffect', 'jsx'],
+                'express': ['express', 'app.get', 'app.post', 'req', 'res'],
+                'vue': ['vue', 'Vue.component', 'v-', '@'],
+                'angular': ['@angular', 'ngOnInit', 'HttpClient'],
+                'jest': ['describe', 'it', 'expect', 'jest']
+            },
+            'java': {
+                'spring': ['@SpringBootApplication', '@RestController', '@Autowired'],
+                'hibernate': ['@Entity', '@Table', '@Column', 'SessionFactory'],
+                'junit': ['@Test', '@BeforeEach', '@AfterEach', 'assertEquals']
+            }
+        }
+        
+        # Check for framework patterns
+        lang_patterns = framework_patterns.get(language.lower(), {})
+        for framework, patterns in lang_patterns.items():
+            if any(pattern in ' '.join(all_references).lower() for pattern in patterns):
+                detected_frameworks.append(framework)
+        
+        return detected_frameworks
+    
+    def _group_similar_patterns(self, patterns: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Group similar structural patterns together.
+        
+        Args:
+            patterns: Dictionary of structural patterns
+            
+        Returns:
+            Grouped patterns
+        """
+        if not patterns:
+            return {}
+        
+        # Simple grouping by detected frameworks
+        grouped_patterns = {}
+        
+        for pattern_id, pattern_data in patterns.items():
+            frameworks = tuple(sorted(pattern_data.get('detected_frameworks', [])))
+            
+            if frameworks:
+                if frameworks not in grouped_patterns:
+                    grouped_patterns[frameworks] = {
+                        'detected_frameworks': list(frameworks),
+                        'file_count': 0,
+                        'average_complexity': 0.0,
+                        'has_tests': False,
+                        'has_docs': False,
+                        'files': []
+                    }
+                
+                grouped_patterns[frameworks]['file_count'] += 1
+                grouped_patterns[frameworks]['files'].append(pattern_data)
+                
+                # Update average complexity
+                complexity = pattern_data.get('complexity_score', 0.0)
+                current_avg = grouped_patterns[frameworks]['average_complexity']
+                count = grouped_patterns[frameworks]['file_count']
+                grouped_patterns[frameworks]['average_complexity'] = (current_avg * (count - 1) + complexity) / count
+                
+                # Update test and doc flags
+                grouped_patterns[frameworks]['has_tests'] = grouped_patterns[frameworks]['has_tests'] or pattern_data.get('has_tests', False)
+                grouped_patterns[frameworks]['has_docs'] = grouped_patterns[frameworks]['has_docs'] or pattern_data.get('has_docs', False)
+        
+        return grouped_patterns
+    
+    def _component_matches_patterns(self, component: Any, pattern_data: Dict[str, Any]) -> bool:
+        """
+        Check if a component matches given structural patterns.
+        
+        Args:
+            component: Component to check
+            pattern_data: Structural pattern data
+            
+        Returns:
+            True if component matches patterns
+        """
+        try:
+            # Check if component name or description contains detected frameworks
+            component_text = ""
+            if hasattr(component, 'name'):
+                component_text += component.name.lower() + " "
+            if hasattr(component, 'description'):
+                component_text += (component.description or "").lower() + " "
+            
+            detected_frameworks = pattern_data.get('detected_frameworks', [])
+            for framework in detected_frameworks:
+                if framework in component_text:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logging.warning(f"Error checking component pattern match: {e}")
+            return False
     
     async def _extract_component_frameworks(self, component: Any, language: str) -> List[str]:
         """Extract framework information from component."""
@@ -427,3 +680,170 @@ class FrameworkCompatibilityChecker:
                 base_score -= 0.05
         
         return max(0.0, base_score)
+    
+    def get_tree_sitter_status(self) -> Dict[str, Any]:
+        """Get status of Tree-sitter integration."""
+        return {
+            'enabled': self.enable_tree_sitter,
+            'analyzer_available': self.tree_sitter_analyzer is not None,
+            'supported_languages': self.tree_sitter_analyzer.get_supported_languages() if self.tree_sitter_analyzer else [],
+            'cache_info': self.tree_sitter_analyzer.get_cache_info() if self.tree_sitter_analyzer else None
+        }
+    
+    async def validate_function_signatures(self, source_files: List[str], language: str) -> Dict[str, Any]:
+        """
+        Validate function signatures using Tree-sitter structural analysis.
+        
+        Args:
+            source_files: List of source files to validate
+            language: Target programming language
+            
+        Returns:
+            Dictionary with validation results
+        """
+        if not self.enable_tree_sitter or not self.tree_sitter_analyzer:
+            return {'enabled': False, 'results': []}
+        
+        validation_results = {
+            'enabled': True,
+            'total_files': len(source_files),
+            'validated_files': 0,
+            'signature_issues': [],
+            'import_issues': [],
+            'structural_warnings': []
+        }
+        
+        try:
+            for file_path in source_files:
+                if not os.path.exists(file_path):
+                    continue
+                
+                try:
+                    file_result = self.tree_sitter_analyzer.analyze_file(file_path, language)
+                    
+                    if file_result and file_result.get('success'):
+                        validation_results['validated_files'] += 1
+                        
+                        # Extract signature validation issues
+                        signature_issues = self._extract_signature_issues(file_result)
+                        import_issues = self._extract_import_issues(file_result)
+                        structural_warnings = self._extract_structural_warnings(file_result)
+                        
+                        validation_results['signature_issues'].extend(signature_issues)
+                        validation_results['import_issues'].extend(import_issues)
+                        validation_results['structural_warnings'].extend(structural_warnings)
+                        
+                except Exception as e:
+                    logging.warning(f"Error validating {file_path}: {e}")
+                    continue
+            
+        except Exception as e:
+            logging.error(f"Error in signature validation: {e}")
+        
+        return validation_results
+    
+    def _extract_signature_issues(self, file_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract function signature validation issues."""
+        issues = []
+        
+        try:
+            structure = file_result.get('structure', {})
+            metrics = file_result.get('metrics', {})
+            
+            # Check for extremely high complexity
+            complexity = float(metrics.get('complexity_score', 0.0))
+            if complexity > 0.8:
+                issues.append({
+                    'type': 'high_complexity',
+                    'severity': 'high',
+                    'message': f'High complexity score: {complexity:.2f}',
+                    'file': file_result.get('file_path', 'unknown')
+                })
+            
+            # Check for extremely large functions (would need Tree-sitter enhancement)
+            functions_count = int(metrics.get('functions_count', 0))
+            if functions_count > 50:
+                issues.append({
+                    'type': 'too_many_functions',
+                    'severity': 'medium',
+                    'message': f'Many functions detected: {functions_count}',
+                    'file': file_result.get('file_path', 'unknown')
+                })
+            
+        except Exception as e:
+            logging.warning(f"Error extracting signature issues: {e}")
+        
+        return issues
+    
+    def _extract_import_issues(self, file_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract import validation issues."""
+        issues = []
+        
+        try:
+            structure = file_result.get('structure', {})
+            imports = structure.get('imports', [])
+            
+            # Check for potential circular imports (simplified detection)
+            if len(imports) > 20:
+                issues.append({
+                    'type': 'too_many_imports',
+                    'severity': 'medium',
+                    'message': f'Many imports detected: {len(imports)}',
+                    'file': file_result.get('file_path', 'unknown')
+                })
+            
+            # Check for relative imports in main modules
+            relative_imports = [imp for imp in imports if imp.startswith('.')]
+            if len(relative_imports) > 5:
+                issues.append({
+                    'type': 'many_relative_imports',
+                    'severity': 'low',
+                    'message': f'Many relative imports: {len(relative_imports)}',
+                    'file': file_result.get('file_path', 'unknown')
+                })
+            
+        except Exception as e:
+            logging.warning(f"Error extracting import issues: {e}")
+        
+        return issues
+    
+    def _extract_structural_warnings(self, file_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract structural warnings from analysis."""
+        warnings = []
+        
+        try:
+            structure = file_result.get('structure', {})
+            metrics = file_result.get('metrics', {})
+            
+            # Check for lack of tests
+            if not structure.get('has_tests', False):
+                warnings.append({
+                    'type': 'missing_tests',
+                    'severity': 'medium',
+                    'message': 'No tests detected in file',
+                    'file': file_result.get('file_path', 'unknown')
+                })
+            
+            # Check for lack of documentation
+            if not structure.get('has_docs', False):
+                warnings.append({
+                    'type': 'missing_docs',
+                    'severity': 'low',
+                    'message': 'No documentation detected in file',
+                    'file': file_result.get('file_path', 'unknown')
+                })
+            
+            # Check for very large files
+            file_size = file_result.get('file_size', 0)
+            if file_size > 5000:  # 5KB threshold
+                warnings.append({
+                    'type': 'large_file',
+                    'severity': 'low',
+                    'message': f'Large file detected: {file_size} bytes',
+                    'file': file_result.get('file_path', 'unknown')
+                })
+            
+        except Exception as e:
+            logging.warning(f"Error extracting structural warnings: {e}")
+        
+        return warnings

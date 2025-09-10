@@ -1,761 +1,452 @@
 """
-Code Integrator
+Precision Code Extraction Module
 
-Automated code integration and conflict resolution for assembled components.
+Automated code extraction and integration using Tree-sitter for enhanced assembly capabilities.
 """
 
-import asyncio
+import os
 import logging
-import re
-from typing import Dict, List, Optional, Any, Set, Tuple
+from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
-import ast
-import json
-
-from .file_extractor import ExtractionResult, ExtractedFile
-
-
-class IntegrationStatus(str, Enum):
-    SUCCESS = "success"
-    FAILED = "failed"
-    PARTIAL = "partial"
-    CONFLICTS = "conflicts"
-
+from ..analysis.universal_code_analyzer import UniversalCodeAnalyzer, CodeElement
+from ..search.sourcegraph_integration import SourceGraphIntegration
 
 @dataclass
-class ImportConflict:
-    module_name: str
-    conflicting_files: List[str]
-    conflict_type: str
-    resolution_suggestion: str
-
-
-@dataclass
-class ConfigConflict:
-    config_key: str
-    conflicting_values: Dict[str, Any]
-    files: List[str]
-    resolution_suggestion: str
-
+class CodeComponent:
+    name: str
+    type: str  # 'function', 'class', 'module'
+    code: str
+    file_path: str
+    language: str
+    dependencies: List[str]
+    imports: List[str]
+    line_start: int
+    line_end: int
+    context: Dict[str, Any]
 
 @dataclass
-class IntegrationResult:
-    status: IntegrationStatus
-    integrated_files: List[str]
-    import_conflicts: List[ImportConflict]
-    config_conflicts: List[ConfigConflict]
-    integration_path: str
-    generated_files: List[str]
-    error_message: Optional[str] = None
+class IntegrationPattern:
+    pattern_id: str
+    pattern_name: str
+    description: str
+    code_example: str
+    dependencies: List[str]
+    confidence_score: float
+    source_repository: str
+    language: str
 
-
-class CodeIntegrator:
-    """Automated code integration with conflict resolution."""
-    
-    def __init__(self, integration_base_dir: Optional[str] = None):
+class PrecisionCodeExtractor:
+    def __init__(self):
+        self.code_analyzer = UniversalCodeAnalyzer()
+        self.sourcegraph_integration = SourceGraphIntegration()
         self.logger = logging.getLogger(__name__)
         
-        # Set up integration directory
-        if integration_base_dir:
-            self.integration_base_dir = Path(integration_base_dir)
-        else:
-            self.integration_base_dir = Path("integrated_project")
-        
-        self.integration_base_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Language-specific integration handlers
-        self.language_handlers = {
-            'python': self._integrate_python_files,
-            'javascript': self._integrate_javascript_files,
-            'java': self._integrate_java_files
-        }
-        
-        # Import pattern matchers
-        self.import_patterns = {
-            'python': {
-                'import': re.compile(r'^import\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)', re.MULTILINE),
-                'from_import': re.compile(r'^from\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s+import\s+(.+)', re.MULTILINE)
-            },
-            'javascript': {
-                'import': re.compile(r'import\s+.*?\s+from\s+[\'"]([^\'"]+)[\'"]', re.MULTILINE),
-                'require': re.compile(r'require\([\'"]([^\'"]+)[\'"]\)', re.MULTILINE)
-            }
-        }
-        
-        # Configuration file handlers
-        self.config_handlers = {
-            'requirements.txt': self._merge_requirements_txt,
-            'package.json': self._merge_package_json,
-            'setup.py': self._merge_setup_py,
-            'pyproject.toml': self._merge_pyproject_toml
-        }
+        # Cache for extracted components
+        self.component_cache = {}
+        self.pattern_cache = {}
     
-    async def integrate_components(self, 
-                                 extraction_results: Dict[str, ExtractionResult],
-                                 language: str = "python",
-                                 project_name: str = "integrated_project") -> IntegrationResult:
-        """
-        Integrate extracted components into a cohesive project.
+    def extract_function_with_context(self, repo_path: str, function_name: str, file_path: str, language: str) -> Dict[str, Any]:
+        """Extract function with full context including dependencies"""
+        cache_key = f"{repo_path}:{function_name}:{file_path}:{language}"
         
-        Args:
-            extraction_results: Results from file extraction
-            language: Target programming language
-            project_name: Name for the integrated project
-            
-        Returns:
-            IntegrationResult with integration status and conflicts
-        """
-        
-        self.logger.info(f"Integrating components for {project_name} ({language})")
-        
-        # Create project directory
-        project_path = self.integration_base_dir / project_name
-        if project_path.exists():
-            import shutil
-            shutil.rmtree(project_path)
-        project_path.mkdir(parents=True)
+        if cache_key in self.component_cache:
+            return self.component_cache[cache_key]
         
         try:
-            # Collect all extracted files
-            all_extracted_files = []
-            for result in extraction_results.values():
-                if result.status.value == 'success':
-                    all_extracted_files.extend(result.extracted_files)
-            
-            # Analyze imports and dependencies
-            import_analysis = await self._analyze_imports(all_extracted_files, language)
-            
-            # Detect conflicts
-            import_conflicts = self._detect_import_conflicts(import_analysis)
-            config_conflicts = await self._detect_config_conflicts(all_extracted_files)
-            
-            # Integrate files using language-specific handler
-            handler = self.language_handlers.get(language.lower(), self._integrate_generic_files)
-            integrated_files = await handler(all_extracted_files, project_path, import_conflicts)
-            
-            # Generate integration files
-            generated_files = await self._generate_integration_files(
-                all_extracted_files, project_path, language, import_analysis
+            # Extract function with dependencies
+            extraction_result = self.code_analyzer.extract_function_with_dependencies(
+                repo_path, function_name, file_path, language
             )
             
-            # Determine overall status
-            if import_conflicts or config_conflicts:
-                status = IntegrationStatus.CONFLICTS
-            elif integrated_files:
-                status = IntegrationStatus.SUCCESS
-            else:
-                status = IntegrationStatus.FAILED
+            if 'error' in extraction_result:
+                return extraction_result
             
-            return IntegrationResult(
-                status=status,
-                integrated_files=integrated_files,
-                import_conflicts=import_conflicts,
-                config_conflicts=config_conflicts,
-                integration_path=str(project_path),
-                generated_files=generated_files
+            # Find related imports and dependencies
+            context = self.build_function_context(file_path, language, extraction_result)
+            
+            # Create code component
+            component = CodeComponent(
+                name=function_name,
+                type='function',
+                code=extraction_result['code'],
+                file_path=file_path,
+                language=language,
+                dependencies=extraction_result['dependencies'],
+                imports=extraction_result['imports'],
+                line_start=extraction_result['line_start'],
+                line_end=extraction_result['line_end'],
+                context=context
+            )
+            
+            result = {
+                'component': component,
+                'success': True,
+                'context': context
+            }
+            
+            # Cache the result
+            self.component_cache[cache_key] = result
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Failed to extract function {function_name}: {e}")
+            return {'error': str(e)}
+    
+    def build_function_context(self, file_path: str, language: str, extraction_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Build comprehensive context for function extraction"""
+        context = {
+            'local_variables': [],
+            'function_calls': [],
+            'class_references': [],
+            'import_symbols': [],
+            'api_calls': [],
+            'error_handling': [],
+            'control_flow': []
+        }
+        
+        try:
+            # Parse the function code to extract context
+            with open(file_path, 'r', encoding='utf-8') as f:
+                source_code = f.read()
+            
+            # Use the code analyzer to extract context
+            file_analysis = self.code_analyzer.parse_file_structure(file_path, language)
+            
+            # Extract local variables (simplified)
+            context['local_variables'] = self._extract_local_variables(
+                extraction_result['code'], language
+            )
+            
+            # Extract function calls
+            context['function_calls'] = self._extract_function_calls(
+                extraction_result['code'], language
+            )
+            
+            # Extract class references
+            context['class_references'] = self._extract_class_references(
+                extraction_result['code'], language
+            )
+            
+            # Extract import symbols
+            context['import_symbols'] = self._extract_import_symbols(
+                extraction_result['code'], language
+            )
+            
+            # Extract API calls
+            context['api_calls'] = self._extract_api_calls(
+                extraction_result['code'], language
+            )
+            
+            # Extract error handling
+            context['error_handling'] = self._extract_error_handling(
+                extraction_result['code'], language
+            )
+            
+            # Extract control flow
+            context['control_flow'] = self._extract_control_flow(
+                extraction_result['code'], language
             )
             
         except Exception as e:
-            self.logger.error(f"Integration failed: {e}")
-            return IntegrationResult(
-                status=IntegrationStatus.FAILED,
-                integrated_files=[],
-                import_conflicts=[],
-                config_conflicts=[],
-                integration_path=str(project_path),
-                generated_files=[],
-                error_message=str(e)
-            )
+            self.logger.error(f"Failed to build context: {e}")
+        
+        return context
     
-    async def _analyze_imports(self, extracted_files: List[ExtractedFile], language: str) -> Dict[str, Any]:
-        """Analyze imports across all extracted files."""
+    def _extract_local_variables(self, code: str, language: str) -> List[str]:
+        """Extract local variables from code"""
+        variables = []
         
-        import_analysis = {
-            'all_imports': set(),
-            'file_imports': {},
-            'external_dependencies': set(),
-            'internal_modules': set()
-        }
+        if language == 'python':
+            # Look for variable assignments
+            lines = code.split('\n')
+            for line in lines:
+                line = line.strip()
+                if '=' in line and not line.startswith('#'):
+                    var_name = line.split('=')[0].strip()
+                    if var_name and not var_name.startswith(('import', 'from', 'class', 'def', 'if', 'for', 'while', 'try', 'except')):
+                        variables.append(var_name)
         
-        patterns = self.import_patterns.get(language.lower(), {})
-        if not patterns:
-            return import_analysis
+        return variables
+    
+    def _extract_function_calls(self, code: str, language: str) -> List[str]:
+        """Extract function calls from code"""
+        calls = []
         
-        for extracted_file in extracted_files:
-            if extracted_file.file_type != 'code':
-                continue
+        if language == 'python':
+            # Look for function calls
+            lines = code.split('\n')
+            for line in lines:
+                line = line.strip()
+                if '(' in line and not line.startswith('#'):
+                    # Extract function name before parentheses
+                    parts = line.split('(')
+                    if len(parts) > 1:
+                        func_name = parts[0].strip()
+                        if func_name and not func_name.startswith(('import', 'from', 'class', 'def', 'if', 'for', 'while', 'try', 'except')):
+                            calls.append(func_name)
+        
+        return calls
+    
+    def _extract_class_references(self, code: str, language: str) -> List[str]:
+        """Extract class references from code"""
+        references = []
+        
+        if language == 'python':
+            # Look for class instantiations and references
+            lines = code.split('\n')
+            for line in lines:
+                line = line.strip()
+                if '(' in line and '.' in line:
+                    # Look for class.method() patterns
+                    parts = line.split('.')
+                    if len(parts) > 1:
+                        class_name = parts[0].strip()
+                        if class_name and class_name not in ['self', 'super', 'print', 'len', 'range']:
+                            references.append(class_name)
+        
+        return references
+    
+    def _extract_import_symbols(self, code: str, language: str) -> List[str]:
+        """Extract import symbols from code"""
+        symbols = []
+        
+        if language == 'python':
+            # Look for import statements
+            lines = code.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line.startswith('import ') or line.startswith('from '):
+                    if line.startswith('import '):
+                        # import module
+                        module = line.replace('import ', '').strip()
+                        symbols.append(module)
+                    elif line.startswith('from '):
+                        # from module import symbol
+                        parts = line.split(' import ')
+                        if len(parts) > 1:
+                            symbols.extend([s.strip() for s in parts[1].split(',')])
+        
+        return symbols
+    
+    def _extract_api_calls(self, code: str, language: str) -> List[str]:
+        """Extract API calls from code"""
+        api_calls = []
+        
+        if language == 'python':
+            # Look for HTTP requests and external API calls
+            lines = code.split('\n')
+            for line in lines:
+                line = line.strip()
+                if any(method in line for method in ['requests.', 'httpx.', 'urllib.', 'aiohttp.', 'http.']) and '(' in line:
+                    api_calls.append(line.strip())
+        
+        return api_calls
+    
+    def _extract_error_handling(self, code: str, language: str) -> List[str]:
+        """Extract error handling patterns from code"""
+        error_handling = []
+        
+        if language == 'python':
+            # Look for try-except blocks
+            lines = code.split('\n')
+            for i, line in enumerate(lines):
+                line = line.strip()
+                if line.startswith('try:'):
+                    # Found try block, look for except
+                    for j in range(i, min(i+10, len(lines))):
+                        if lines[j].strip().startswith('except'):
+                            error_handling.append(lines[j].strip())
+                            break
+        
+        return error_handling
+    
+    def _extract_control_flow(self, code: str, language: str) -> List[str]:
+        """Extract control flow patterns from code"""
+        control_flow = []
+        
+        if language == 'python':
+            # Look for control flow statements
+            lines = code.split('\n')
+            for line in lines:
+                line = line.strip()
+                if any(stmt in line for stmt in ['if ', 'for ', 'while ', 'with ', 'elif ', 'else:']):
+                    control_flow.append(line.strip())
+        
+        return control_flow
+    
+    def discover_integration_patterns(self, libraries: List[str], use_case: str) -> List[IntegrationPattern]:
+        """Discover integration patterns from SourceGraph"""
+        cache_key = f"{':'.join(libraries)}:{use_case}"
+        
+        if cache_key in self.pattern_cache:
+            return self.pattern_cache[cache_key]
+        
+        try:
+            # Use SourceGraph to find patterns
+            pattern_validation = self.sourcegraph_integration.validate_pattern(libraries, use_case)
             
-            file_path = Path(extracted_file.extracted_path)
-            if not file_path.exists():
-                continue
+            patterns = []
             
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                file_imports = set()
-                
-                # Extract imports based on language patterns
-                for pattern_name, pattern in patterns.items():
-                    matches = pattern.findall(content)
-                    for match in matches:
-                        if isinstance(match, tuple):
-                            # Handle from_import case
-                            module_name = match[0]
-                        else:
-                            module_name = match
-                        
-                        file_imports.add(module_name)
-                        import_analysis['all_imports'].add(module_name)
-                
-                import_analysis['file_imports'][extracted_file.extracted_path] = file_imports
-                
-                # Classify imports as external or internal
-                for import_name in file_imports:
-                    if self._is_external_dependency(import_name, language):
-                        import_analysis['external_dependencies'].add(import_name)
-                    else:
-                        import_analysis['internal_modules'].add(import_name)
-                
-            except Exception as e:
-                self.logger.warning(f"Could not analyze imports in {file_path}: {e}")
-        
-        return import_analysis
-    
-    def _detect_import_conflicts(self, import_analysis: Dict[str, Any]) -> List[ImportConflict]:
-        """Detect potential import conflicts."""
-        
-        conflicts = []
-        
-        # Check for duplicate module names from different files
-        module_to_files = {}
-        for file_path, imports in import_analysis['file_imports'].items():
-            for import_name in imports:
-                if import_name not in module_to_files:
-                    module_to_files[import_name] = []
-                module_to_files[import_name].append(file_path)
-        
-        # Identify potential conflicts (same module name from multiple sources)
-        for module_name, files in module_to_files.items():
-            if len(files) > 1 and not self._is_standard_library(module_name):
-                conflicts.append(ImportConflict(
-                    module_name=module_name,
-                    conflicting_files=files,
-                    conflict_type="duplicate_import",
-                    resolution_suggestion=f"Verify {module_name} is the same module in all files"
-                ))
-        
-        return conflicts
-    
-    async def _detect_config_conflicts(self, extracted_files: List[ExtractedFile]) -> List[ConfigConflict]:
-        """Detect configuration conflicts."""
-        
-        conflicts = []
-        config_files = [f for f in extracted_files if f.file_type == 'config']
-        
-        # Group config files by type
-        config_by_type = {}
-        for config_file in config_files:
-            file_name = Path(config_file.original_path).name
-            if file_name not in config_by_type:
-                config_by_type[file_name] = []
-            config_by_type[file_name].append(config_file)
-        
-        # Check for conflicts in each config type
-        for config_type, files in config_by_type.items():
-            if len(files) > 1:
-                conflicts.append(ConfigConflict(
-                    config_key=config_type,
-                    conflicting_values={f.extracted_path: "multiple_files" for f in files},
-                    files=[f.extracted_path for f in files],
-                    resolution_suggestion=f"Merge {config_type} files manually"
-                ))
-        
-        return conflicts
-    
-    async def _integrate_python_files(self, extracted_files: List[ExtractedFile], 
-                                    project_path: Path, import_conflicts: List[ImportConflict]) -> List[str]:
-        """Integrate Python files with conflict resolution."""
-        
-        integrated_files = []
-        
-        # Create source directory structure
-        src_path = project_path / "src"
-        src_path.mkdir(exist_ok=True)
-        
-        # Copy code files
-        for extracted_file in extracted_files:
-            if extracted_file.file_type == 'code':
-                source_path = Path(extracted_file.extracted_path)
-                if not source_path.exists():
-                    continue
-                
-                # Determine destination path
-                relative_path = Path(extracted_file.original_path)
-                dest_path = src_path / relative_path.name
-                
-                # Handle naming conflicts
-                counter = 1
-                original_dest = dest_path
-                while dest_path.exists():
-                    stem = original_dest.stem
-                    suffix = original_dest.suffix
-                    dest_path = original_dest.parent / f"{stem}_{counter}{suffix}"
-                    counter += 1
-                
-                # Copy file
-                import shutil
-                shutil.copy2(source_path, dest_path)
-                integrated_files.append(str(dest_path.relative_to(project_path)))
-        
-        # Copy configuration files to project root
-        for extracted_file in extracted_files:
-            if extracted_file.file_type == 'config':
-                source_path = Path(extracted_file.extracted_path)
-                if not source_path.exists():
-                    continue
-                
-                file_name = Path(extracted_file.original_path).name
-                dest_path = project_path / file_name
-                
-                # Handle config file merging
-                if dest_path.exists() and file_name in self.config_handlers:
-                    # Merge configuration files
-                    handler = self.config_handlers[file_name]
-                    await handler(source_path, dest_path)
-                else:
-                    import shutil
-                    shutil.copy2(source_path, dest_path)
-                
-                integrated_files.append(str(dest_path.relative_to(project_path)))
-        
-        return integrated_files
-    
-    async def _integrate_javascript_files(self, extracted_files: List[ExtractedFile], 
-                                        project_path: Path, import_conflicts: List[ImportConflict]) -> List[str]:
-        """Integrate JavaScript files."""
-        
-        integrated_files = []
-        
-        # Create source directory
-        src_path = project_path / "src"
-        src_path.mkdir(exist_ok=True)
-        
-        # Copy files similar to Python integration
-        for extracted_file in extracted_files:
-            if extracted_file.file_type in ['code', 'config']:
-                source_path = Path(extracted_file.extracted_path)
-                if not source_path.exists():
-                    continue
-                
-                if extracted_file.file_type == 'code':
-                    dest_path = src_path / Path(extracted_file.original_path).name
-                else:
-                    dest_path = project_path / Path(extracted_file.original_path).name
-                
-                import shutil
-                shutil.copy2(source_path, dest_path)
-                integrated_files.append(str(dest_path.relative_to(project_path)))
-        
-        return integrated_files
-    
-    async def _integrate_java_files(self, extracted_files: List[ExtractedFile], 
-                                  project_path: Path, import_conflicts: List[ImportConflict]) -> List[str]:
-        """Integrate Java files."""
-        
-        integrated_files = []
-        
-        # Create Maven-style directory structure
-        src_main_java = project_path / "src" / "main" / "java"
-        src_main_java.mkdir(parents=True, exist_ok=True)
-        
-        for extracted_file in extracted_files:
-            if extracted_file.file_type == 'code':
-                source_path = Path(extracted_file.extracted_path)
-                if not source_path.exists():
-                    continue
-                
-                dest_path = src_main_java / Path(extracted_file.original_path).name
-                
-                import shutil
-                shutil.copy2(source_path, dest_path)
-                integrated_files.append(str(dest_path.relative_to(project_path)))
-        
-        return integrated_files
-    
-    async def _integrate_generic_files(self, extracted_files: List[ExtractedFile], 
-                                     project_path: Path, import_conflicts: List[ImportConflict]) -> List[str]:
-        """Generic file integration for unsupported languages."""
-        
-        integrated_files = []
-        
-        for extracted_file in extracted_files:
-            source_path = Path(extracted_file.extracted_path)
-            if not source_path.exists():
-                continue
+            for example in pattern_validation['examples']:
+                pattern = IntegrationPattern(
+                    pattern_id=f"{example['repository']}_{example['file_path'].replace('/', '_')}",
+                    pattern_name=f"{example['language']}_integration",
+                    description=f"Integration pattern from {example['repository']}",
+                    code_example=example['code_snippet'],
+                    dependencies=libraries,
+                    confidence_score=pattern_validation['confidence'],
+                    source_repository=example['repository'],
+                    language=example['language']
+                )
+                patterns.append(pattern)
             
-            dest_path = project_path / Path(extracted_file.original_path).name
+            # Cache the result
+            self.pattern_cache[cache_key] = patterns
             
-            import shutil
-            shutil.copy2(source_path, dest_path)
-            integrated_files.append(str(dest_path.relative_to(project_path)))
-        
-        return integrated_files
-    
-    async def _generate_integration_files(self, extracted_files: List[ExtractedFile], 
-                                        project_path: Path, language: str, 
-                                        import_analysis: Dict[str, Any]) -> List[str]:
-        """Generate integration and configuration files."""
-        
-        generated_files = []
-        
-        # Generate main entry point
-        if language.lower() == 'python':
-            main_file = await self._generate_python_main(project_path, import_analysis)
-            if main_file:
-                generated_files.append(main_file)
+            return patterns
             
-            # Generate __init__.py files
-            init_files = await self._generate_python_init_files(project_path)
-            generated_files.extend(init_files)
-        
-        elif language.lower() == 'javascript':
-            main_file = await self._generate_javascript_main(project_path, import_analysis)
-            if main_file:
-                generated_files.append(main_file)
-        
-        # Generate README
-        readme_file = await self._generate_readme(project_path, extracted_files, language)
-        if readme_file:
-            generated_files.append(readme_file)
-        
-        return generated_files
+        except Exception as e:
+            self.logger.error(f"Failed to discover integration patterns: {e}")
+            return []
     
-    async def _generate_python_main(self, project_path: Path, import_analysis: Dict[str, Any]) -> Optional[str]:
-        """Generate Python main entry point."""
+    def match_components_to_patterns(self, components: List[CodeComponent], patterns: List[IntegrationPattern]) -> Dict[str, List[CodeComponent]]:
+        """Match extracted components to integration patterns"""
+        pattern_matches = {pattern.pattern_id: [] for pattern in patterns}
         
-        main_content = '''#!/usr/bin/env python3
-"""
-Integrated Project Main Entry Point
-
-This file was automatically generated by AutoBot Assembly System.
-"""
-
-import sys
-from pathlib import Path
-
-# Add src directory to Python path
-src_path = Path(__file__).parent / "src"
-sys.path.insert(0, str(src_path))
-
-
-def main():
-    """Main entry point for the integrated project."""
-    print("Integrated project started successfully!")
+        for component in components:
+            for pattern in patterns:
+                if self._component_matches_pattern(component, pattern):
+                    pattern_matches[pattern.pattern_id].append(component)
+        
+        return pattern_matches
     
-    # TODO: Add your main application logic here
-    pass
-
-
-if __name__ == "__main__":
-    main()
-'''
-        
-        main_path = project_path / "main.py"
-        with open(main_path, 'w', encoding='utf-8') as f:
-            f.write(main_content)
-        
-        return str(main_path.relative_to(project_path))
-    
-    async def _generate_python_init_files(self, project_path: Path) -> List[str]:
-        """Generate __init__.py files for Python packages."""
-        
-        generated_files = []
-        src_path = project_path / "src"
-        
-        if src_path.exists():
-            init_path = src_path / "__init__.py"
-            with open(init_path, 'w', encoding='utf-8') as f:
-                f.write('"""Integrated project source package."""\n')
-            generated_files.append(str(init_path.relative_to(project_path)))
-        
-        return generated_files
-    
-    async def _generate_javascript_main(self, project_path: Path, import_analysis: Dict[str, Any]) -> Optional[str]:
-        """Generate JavaScript main entry point."""
-        
-        main_content = '''/**
- * Integrated Project Main Entry Point
- * 
- * This file was automatically generated by AutoBot Assembly System.
- */
-
-console.log("Integrated project started successfully!");
-
-// TODO: Add your main application logic here
-
-module.exports = {
-    // Export your main functions here
-};
-'''
-        
-        main_path = project_path / "index.js"
-        with open(main_path, 'w', encoding='utf-8') as f:
-            f.write(main_content)
-        
-        return str(main_path.relative_to(project_path))
-    
-    async def _generate_readme(self, project_path: Path, extracted_files: List[ExtractedFile], language: str) -> Optional[str]:
-        """Generate project README."""
-        
-        # Count file types
-        file_counts = {'code': 0, 'config': 0, 'documentation': 0}
-        for f in extracted_files:
-            file_counts[f.file_type] = file_counts.get(f.file_type, 0) + 1
-        
-        readme_content = f'''# Integrated Project
-
-This project was automatically assembled by the AutoBot Assembly System.
-
-## Project Structure
-
-- **Language**: {language.title()}
-- **Code files**: {file_counts['code']}
-- **Configuration files**: {file_counts['config']}
-- **Documentation files**: {file_counts['documentation']}
-
-## Getting Started
-
-### Prerequisites
-
-Make sure you have {language.title()} installed on your system.
-
-### Installation
-
-1. Clone or download this project
-2. Install dependencies (if any)
-3. Run the main entry point
-
-### Usage
-
-```bash
-# For Python projects
-python main.py
-
-# For JavaScript projects
-node index.js
-```
-
-## Components
-
-This project integrates the following components:
-
-'''
-        
-        # Add component information
-        repo_names = set()
-        for f in extracted_files:
-            # Extract repository name from path
-            path_parts = Path(f.extracted_path).parts
-            if len(path_parts) > 0:
-                repo_names.add(path_parts[0])
-        
-        for repo_name in sorted(repo_names):
-            readme_content += f"- {repo_name}\n"
-        
-        readme_content += '''
-## Notes
-
-- This is an automatically generated integration
-- Manual review and testing is recommended
-- Some components may require additional configuration
-
-## License
-
-Please review the licenses of individual components for compliance requirements.
-'''
-        
-        readme_path = project_path / "README.md"
-        with open(readme_path, 'w', encoding='utf-8') as f:
-            f.write(readme_content)
-        
-        return str(readme_path.relative_to(project_path))
-    
-    async def _merge_requirements_txt(self, source_path: Path, dest_path: Path):
-        """Merge requirements.txt files."""
-        
-        # Read existing requirements
-        existing_reqs = set()
-        if dest_path.exists():
-            with open(dest_path, 'r') as f:
-                existing_reqs = set(line.strip() for line in f if line.strip() and not line.startswith('#'))
-        
-        # Read new requirements
-        new_reqs = set()
-        with open(source_path, 'r') as f:
-            new_reqs = set(line.strip() for line in f if line.strip() and not line.startswith('#'))
-        
-        # Merge and write
-        all_reqs = sorted(existing_reqs.union(new_reqs))
-        with open(dest_path, 'w') as f:
-            f.write("# Merged requirements from multiple components\n")
-            for req in all_reqs:
-                f.write(f"{req}\n")
-    
-    async def _merge_package_json(self, source_path: Path, dest_path: Path):
-        """Merge package.json files."""
-        
-        # This is a simplified merge - in practice, you'd want more sophisticated merging
-        import json
-        
-        # Read existing package.json
-        existing_data = {}
-        if dest_path.exists():
-            with open(dest_path, 'r') as f:
-                existing_data = json.load(f)
-        
-        # Read new package.json
-        with open(source_path, 'r') as f:
-            new_data = json.load(f)
-        
-        # Merge dependencies
-        if 'dependencies' in new_data:
-            if 'dependencies' not in existing_data:
-                existing_data['dependencies'] = {}
-            existing_data['dependencies'].update(new_data['dependencies'])
-        
-        if 'devDependencies' in new_data:
-            if 'devDependencies' not in existing_data:
-                existing_data['devDependencies'] = {}
-            existing_data['devDependencies'].update(new_data['devDependencies'])
-        
-        # Write merged file
-        with open(dest_path, 'w') as f:
-            json.dump(existing_data, f, indent=2)
-    
-    async def _merge_setup_py(self, source_path: Path, dest_path: Path):
-        """Merge setup.py files (simplified)."""
-        
-        # For setup.py, we'll just append a comment about the conflict
-        with open(dest_path, 'a') as f:
-            f.write(f"\n# NOTE: Conflicting setup.py from {source_path.name}\n")
-            f.write(f"# Manual merge required\n")
-    
-    async def _merge_pyproject_toml(self, source_path: Path, dest_path: Path):
-        """Merge pyproject.toml files (simplified)."""
-        
-        # Similar to setup.py, add a note about the conflict
-        with open(dest_path, 'a') as f:
-            f.write(f"\n# NOTE: Conflicting pyproject.toml from {source_path.name}\n")
-            f.write(f"# Manual merge required\n")
-    
-    def _is_external_dependency(self, import_name: str, language: str) -> bool:
-        """Check if import is an external dependency."""
-        
-        # Standard library modules (simplified)
-        stdlib_modules = {
-            'python': ['os', 'sys', 'json', 'datetime', 'collections', 'itertools', 're', 'pathlib'],
-            'javascript': ['fs', 'path', 'http', 'https', 'url', 'util']
-        }
-        
-        std_modules = stdlib_modules.get(language.lower(), [])
-        
-        # Check if it's a standard library module
-        for std_module in std_modules:
-            if import_name.startswith(std_module):
-                return False
-        
-        # Check if it's a relative import
-        if import_name.startswith('.'):
+    def _component_matches_pattern(self, component: CodeComponent, pattern: IntegrationPattern) -> bool:
+        """Check if component matches a pattern"""
+        # Simple matching logic - in real implementation this would be more sophisticated
+        if component.language != pattern.language:
             return False
         
-        return True
-    
-    def _is_standard_library(self, module_name: str) -> bool:
-        """Check if module is part of standard library."""
+        # Check if component uses any of the pattern dependencies
+        if not any(dep in component.dependencies for dep in pattern.dependencies):
+            return False
         
-        # Common standard library modules
-        stdlib = [
-            'os', 'sys', 'json', 'datetime', 'collections', 'itertools', 're', 'pathlib',
-            'asyncio', 'logging', 'typing', 'dataclasses', 'enum', 'functools'
-        ]
+        # Check code similarity (simplified)
+        if len(component.code) > 0 and len(pattern.code_example) > 0:
+            # Simple keyword matching
+            component_keywords = set(component.code.lower().split())
+            pattern_keywords = set(pattern.code_example.lower().split())
+            
+            # Check for significant overlap
+            if len(component_keywords.intersection(pattern_keywords)) > min(5, len(pattern_keywords) // 2):
+                return True
         
-        return any(module_name.startswith(std) for std in stdlib)
-
-
-# Example usage
-async def main():
-    from .repository_cloner import RepositoryCloner
-    from .file_extractor import FileExtractor
-    from ..search.tier1_packages import PackageResult
-    from datetime import datetime
+        return False
     
-    # Test integration workflow
-    cloner = RepositoryCloner()
-    extractor = FileExtractor()
-    integrator = CodeIntegrator()
+    def integrate_components(self, components: List[CodeComponent], patterns: List[IntegrationPattern]) -> Dict[str, Any]:
+        """Integrate components based on patterns"""
+        integration_result = {
+            'components': components,
+            'patterns': patterns,
+            'matches': self.match_components_to_patterns(components, patterns),
+            'integration_score': 0.0,
+            'recommendations': [],
+            'warnings': []
+        }
+        
+        # Calculate integration score
+        total_matches = sum(len(matches) for matches in integration_result['matches'].values())
+        integration_result['integration_score'] = min(1.0, total_matches / len(components)) if components else 0.0
+        
+        # Generate recommendations
+        if integration_result['integration_score'] < 0.5:
+            integration_result['recommendations'].append(
+                "Consider reviewing component dependencies against integration patterns"
+            )
+        
+        # Generate warnings
+        for pattern_id, matches in integration_result['matches'].items():
+            if not matches:
+                integration_result['warnings'].append(
+                    f"No components matched pattern {pattern_id}"
+                )
+        
+        return integration_result
     
-    # Create test repository
-    test_repos = [
-        PackageResult(
-            name="requests",
-            repository_url="https://github.com/psf/requests",
-            description="HTTP library for Python",
-            downloads=1000000,
-            stars=50000,
-            last_updated=datetime.now(),
-            license="Apache-2.0",
-            quality_score=0.9,
-            language="python",
-            package_manager="pypi",
-            version="2.31.0",
-            dependencies_count=5
-        )
-    ]
+    def validate_integration_compatibility(self, components: List[CodeComponent]) -> Dict[str, Any]:
+        """Validate compatibility between components"""
+        compatibility_result = {
+            'compatible': True,
+            'issues': [],
+            'warnings': [],
+            'recommendations': []
+        }
+        
+        # Check for conflicting dependencies
+        dependency_conflicts = self._find_dependency_conflicts(components)
+        if dependency_conflicts:
+            compatibility_result['compatible'] = False
+            compatibility_result['issues'].extend(dependency_conflicts)
+        
+        # Check for language compatibility
+        language_conflicts = self._find_language_conflicts(components)
+        if language_conflicts:
+            compatibility_result['warnings'].extend(language_conflicts)
+        
+        # Check for structural compatibility
+        structural_issues = self._find_structural_issues(components)
+        if structural_issues:
+            compatibility_result['warnings'].extend(structural_issues)
+        
+        return compatibility_result
     
-    print("Testing code integration workflow...")
+    def _find_dependency_conflicts(self, components: List[CodeComponent]) -> List[str]:
+        """Find dependency conflicts between components"""
+        conflicts = []
+        
+        # Collect all dependencies
+        all_dependencies = {}
+        for component in components:
+            for dep in component.dependencies:
+                if dep in all_dependencies:
+                    if all_dependencies[dep] != component.language:
+                        conflicts.append(
+                            f"Dependency conflict: {dep} used by both {all_dependencies[dep]} and {component.language}"
+                        )
+                else:
+                    all_dependencies[dep] = component.language
+        
+        return conflicts
     
-    # Clone repositories
-    clone_results = await cloner.clone_repositories(test_repos)
+    def _find_language_conflicts(self, components: List[CodeComponent]) -> List[str]:
+        """Find language compatibility issues"""
+        conflicts = []
+        
+        # Check for mixed language components that might need integration
+        languages = [comp.language for comp in components]
+        if len(set(languages)) > 1:
+            conflicts.append(
+                "Multiple programming languages detected - ensure proper integration mechanisms"
+            )
+        
+        return conflicts
     
-    # Extract files
-    extraction_results = await extractor.extract_files(
-        clone_results, 
-        language="python",
-        extraction_criteria={'max_files_per_repo': 10}
-    )
-    
-    # Integrate components
-    integration_result = await integrator.integrate_components(
-        extraction_results, 
-        language="python",
-        project_name="test_integration"
-    )
-    
-    # Print results
-    print(f"\nIntegration Result:")
-    print(f"  Status: {integration_result.status.value}")
-    print(f"  Integrated files: {len(integration_result.integrated_files)}")
-    print(f"  Generated files: {len(integration_result.generated_files)}")
-    print(f"  Import conflicts: {len(integration_result.import_conflicts)}")
-    print(f"  Config conflicts: {len(integration_result.config_conflicts)}")
-    print(f"  Integration path: {integration_result.integration_path}")
-    
-    if integration_result.import_conflicts:
-        print(f"\nImport Conflicts:")
-        for conflict in integration_result.import_conflicts:
-            print(f"  • {conflict.module_name}: {conflict.conflict_type}")
-            print(f"    Files: {', '.join(conflict.conflicting_files)}")
-            print(f"    Suggestion: {conflict.resolution_suggestion}")
-    
-    # Cleanup
-    await cloner.cleanup_clones(clone_results)
-    print("Test completed")
-
-
-if __name__ == "__main__":
-    import asyncio
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
+    def _find_structural_issues(self, components: List[CodeComponent]) -> List[str]:
+        """Find structural compatibility issues"""
+        issues = []
+        
+        # Check for circular dependencies (simplified)
+        function_names = [comp.name for comp in components if comp.type == 'function']
+        if len(function_names) > 10:
+            issues.append(
+                "Large number of functions detected - consider modular organization"
+            )
+        
+        # Check for missing main entry point
+        main_functions = [comp for comp in components if comp.name.lower() in ['main', 'app', 'run']]
+        if not main_functions and len(components) > 5:
+            issues.append(
+                "No clear entry point detected - consider adding a main function"
+            )
+        
+        return issues

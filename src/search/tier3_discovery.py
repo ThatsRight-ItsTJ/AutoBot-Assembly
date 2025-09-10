@@ -1,18 +1,19 @@
 """
-Tier 3 Search: AI-Driven GitHub Discovery
+Tier 3 Search: AI-Driven GitHub Discovery with SourceGraph Pattern Discovery
 
 Uses AI and advanced search techniques to discover relevant repositories
-on GitHub and other code hosting platforms.
+on GitHub and other code hosting platforms, enhanced with SourceGraph pattern discovery.
 """
 
 import asyncio
 import logging
-from typing import List, Dict, Optional, Set
-from dataclasses import dataclass
+from typing import List, Dict, Optional, Set, Any
+from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime, timedelta
 
 import aiohttp
+import os
 
 
 class RepositoryQuality(Enum):
@@ -40,10 +41,13 @@ class DiscoveredRepository:
     relevance_score: float = 0.0
     is_active: bool = True
     contributor_count: int = 1
+    sourcegraph_patterns: List[Dict] = field(default_factory=list)
+    pattern_similarity_score: float = 0.0
+    sourcegraph_insights: Dict[str, Any] = field(default_factory=dict)
 
 
 class GitHubDiscoverer:
-    """AI-driven GitHub repository discovery system."""
+    """AI-driven GitHub repository discovery system with SourceGraph integration."""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -61,6 +65,16 @@ class GitHubDiscoverer:
             'required_files': ['README.md', 'LICENSE'],
             'preferred_topics': ['python', 'api', 'web', 'scraping', 'news']
         }
+        
+        # SourceGraph configuration
+        self.sourcegraph_enabled = os.getenv('SOURCEGRAPH_API_TOKEN') is not None
+        self.sourcegraph_endpoint = os.getenv('SOURCEGRAPH_ENDPOINT', 'https://sourcegraph.com/.api/graphql')
+        self.sourcegraph_token = os.getenv('SOURCEGRAPH_API_TOKEN')
+        
+        # Pattern discovery settings
+        self.pattern_discovery_enabled = self.sourcegraph_enabled
+        self.max_pattern_results = 5
+        self.min_pattern_similarity = 0.6
     
     async def __aenter__(self):
         """Async context manager entry."""
@@ -153,8 +167,8 @@ class GitHubDiscoverer:
         return min(1.0, score)
     
     async def discover_repositories(self, query: str, language: str) -> List[DiscoveredRepository]:
-        """Discover repositories using AI-driven search strategies."""
-        self.logger.info(f"Discovering repositories for: {query} (language: {language})")
+        """Discover repositories using AI-driven search strategies with SourceGraph pattern discovery."""
+        self.logger.info(f"Discovering repositories for: {query} (language: {language}) with SourceGraph pattern discovery")
         
         # Generate mock repositories based on query
         mock_repos = await self._generate_mock_repositories(query, language)
@@ -183,10 +197,14 @@ class GitHubDiscoverer:
             )
             results.append(result)
         
-        # Sort by combined score (quality + relevance)
-        results.sort(key=lambda x: (x.quality_score + x.relevance_score) / 2, reverse=True)
+        # Enhance with SourceGraph pattern discovery if enabled
+        if self.pattern_discovery_enabled:
+            await self._enhance_with_sourcegraph_patterns(results, query, language)
         
-        self.logger.info(f"Discovered {len(results)} repositories for '{query}'")
+        # Sort by combined score (quality + relevance + pattern similarity)
+        results.sort(key=lambda x: (x.quality_score + x.relevance_score + x.pattern_similarity_score) / 3, reverse=True)
+        
+        self.logger.info(f"Discovered {len(results)} repositories for '{query}' with pattern discovery")
         return results[:8]  # Return top 8 most relevant
     
     async def _generate_mock_repositories(self, query: str, language: str) -> List[Dict]:
@@ -319,6 +337,174 @@ class GitHubDiscoverer:
             })
         
         return mock_repos
+    
+    async def _enhance_with_sourcegraph_patterns(self, repositories: List[DiscoveredRepository], query: str, language: str):
+        """Enhance repositories with SourceGraph pattern discovery."""
+        if not self.pattern_discovery_enabled:
+            return
+        
+        self.logger.info("Enhancing repositories with SourceGraph pattern discovery")
+        
+        try:
+            # Import SourceGraph integration
+            from .sourcegraph_integration import SourceGraphDiscovery
+            
+            async with SourceGraphDiscovery() as discovery:
+                for repo in repositories:
+                    try:
+                        # Discover patterns for this repository
+                        patterns = await self._discover_repository_patterns(discovery, repo, query, language)
+                        
+                        if patterns:
+                            repo.sourcegraph_patterns = patterns
+                            repo.pattern_similarity_score = self._calculate_pattern_similarity(patterns, query)
+                            repo.sourcegraph_insights = self._extract_sourcegraph_insights(patterns)
+                            
+                        self.logger.debug(f"Enhanced {repo.name} with {len(patterns)} SourceGraph patterns")
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Failed to enhance {repo.name} with SourceGraph patterns: {e}")
+                        continue
+                        
+        except ImportError:
+            self.logger.warning("SourceGraph integration not available")
+        except Exception as e:
+            self.logger.error(f"SourceGraph pattern discovery failed: {e}")
+    
+    async def _discover_repository_patterns(self, discovery, repo: DiscoveredRepository, query: str, language: str) -> List[Dict]:
+        """Discover patterns for a specific repository using SourceGraph."""
+        try:
+            # Build search query based on repository details
+            search_query = self._build_pattern_query(repo, query, language)
+            
+            # Search SourceGraph for patterns
+            results = await discovery.sourcegraph_search(search_query)
+            
+            # Convert results to pattern format
+            patterns = []
+            for result in results[:self.max_pattern_results]:  # Limit results
+                pattern = {
+                    'repository': result.repository,
+                    'path': result.path,
+                    'content': result.content,
+                    'language': result.language,
+                    'score': result.score,
+                    'context_lines': result.context_lines,
+                    'match_type': result.match_type
+                }
+                patterns.append(pattern)
+            
+            return patterns
+            
+        except Exception as e:
+            self.logger.warning(f"Pattern discovery failed for {repo.name}: {e}")
+            return []
+    
+    def _build_pattern_query(self, repo: DiscoveredRepository, query: str, language: str) -> str:
+        """Build SourceGraph search query for pattern discovery."""
+        # Start with repository-specific query
+        repo_query = f"repo:{repo.full_name}"
+        
+        # Add query terms
+        query_terms = query.lower().split()
+        
+        # Add language filter
+        if language:
+            lang_query = f"lang:{language.lower()}"
+        else:
+            lang_query = ""
+        
+        # Combine queries
+        queries = [repo_query]
+        if query_terms:
+            queries.append(f"({' OR '.join(query_terms)})")
+        if lang_query:
+            queries.append(lang_query)
+        
+        # Add pattern-specific terms
+        pattern_terms = [
+            "pattern", "example", "implementation", "usage",
+            "integration", "best practice", "common"
+        ]
+        queries.append(f"({' OR '.join(pattern_terms)})")
+        
+        return " AND ".join(queries)
+    
+    def _calculate_pattern_similarity(self, patterns: List[Dict], query: str) -> float:
+        """Calculate pattern similarity score based on query relevance."""
+        if not patterns:
+            return 0.0
+        
+        total_score = 0.0
+        max_score = 0.0
+        
+        query_lower = query.lower()
+        
+        for pattern in patterns:
+            max_score += 1.0
+            
+            # Check if pattern content matches query terms
+            content = pattern.get('content', '').lower()
+            path = pattern.get('path', '').lower()
+            
+            # Score based on query term matches
+            matches = 0
+            for term in query_lower.split():
+                if term in content or term in path:
+                    matches += 1
+            
+            # Normalize score
+            if query_lower.split():
+                similarity = matches / len(query_lower.split())
+                total_score += similarity * pattern.get('score', 0.5)
+        
+        return min(1.0, total_score / max_score if max_score > 0 else 0.0)
+    
+    def _extract_sourcegraph_insights(self, patterns: List[Dict]) -> Dict[str, Any]:
+        """Extract insights from SourceGraph patterns."""
+        if not patterns:
+            return {}
+        
+        insights = {
+            'total_patterns': len(patterns),
+            'languages_found': set(),
+            'repositories_found': set(),
+            'avg_pattern_score': 0.0,
+            'common_patterns': {}
+        }
+        
+        total_score = 0.0
+        
+        for pattern in patterns:
+            # Track languages
+            language = pattern.get('language', 'unknown')
+            insights['languages_found'].add(language)
+            
+            # Track repositories
+            repo = pattern.get('repository', 'unknown')
+            insights['repositories_found'].add(repo)
+            
+            # Track scores
+            score = pattern.get('score', 0.0)
+            total_score += score
+            
+            # Analyze common patterns (simplified)
+            content = pattern.get('content', '')
+            if 'def ' in content:
+                insights['common_patterns']['functions'] = insights['common_patterns'].get('functions', 0) + 1
+            if 'class ' in content:
+                insights['common_patterns']['classes'] = insights['common_patterns'].get('classes', 0) + 1
+            if 'import ' in content:
+                insights['common_patterns']['imports'] = insights['common_patterns'].get('imports', 0) + 1
+        
+        # Calculate average score
+        insights['avg_pattern_score'] = total_score / len(patterns) if patterns else 0.0
+        
+        # Convert sets to lists for JSON serialization
+        insights['languages_found'] = list(insights['languages_found'])
+        insights['repositories_found'] = list(insights['repositories_found'])
+        
+        return insights
 
 
 class Tier3Search:

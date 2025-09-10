@@ -1,0 +1,28 @@
+{
+  "file_path": "src/orchestration/project_analyzer.py",
+  "language": "python",
+  "file_size": 38331,
+  "line_count": 885,
+  "success": true,
+  "ast_info": {
+    "root_node": "mock_root_node",
+    "node_count": 0,
+    "depth": 0,
+    "parse_time": 0.0
+  },
+  "metrics": {
+    "complexity_score": 0.0,
+    "maintainability_index": 0.0,
+    "cyclomatic_complexity": 0,
+    "functions_count": 0,
+    "classes_count": 0,
+    "comments_ratio": 0.0
+  },
+  "structure": {
+    "has_main_function": false,
+    "has_tests": false,
+    "has_docs": true,
+    "imports": [],
+    "dependencies": []
+  }
+}

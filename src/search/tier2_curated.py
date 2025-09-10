@@ -7,7 +7,7 @@ for specific domains and use cases.
 
 import asyncio
 import logging
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Any
 from dataclasses import dataclass
 from enum import Enum
 
@@ -319,3 +319,189 @@ async def search_curated_collections(query: str, language: Optional[str] = None)
     """Search curated collections (backward compatibility function)."""
     searcher = Tier2Search()
     return await searcher.search(query, language)
+
+
+# Enhanced search with SourceGraph integration
+async def enhanced_curated_search(requirements: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Enhanced search with SourceGraph validation and pattern discovery."""
+    
+    # Extract search parameters
+    query = requirements.get('query', '')
+    language = requirements.get('language')
+    libraries = requirements.get('libraries', [])
+    use_case = requirements.get('use_case', 'general')
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Performing enhanced curated search for: {query}")
+    
+    # Perform original curated search
+    original_searcher = Tier2Search()
+    curated_collections = await original_searcher.search(query, language)
+    
+    # Initialize SourceGraph integration if available
+    enhanced_results = []
+    
+    try:
+        from .sourcegraph_integration import SourceGraphDiscovery
+        
+        async with SourceGraphDiscovery() as sg_discovery:
+            # Validate patterns with SourceGraph for each collection
+            for collection in curated_collections:
+                for repo in collection.repositories:
+                    # Validate the pattern for this repository
+                    pattern_validation = await sg_discover_pattern(
+                        sg_discovery,
+                        repo,
+                        libraries,
+                        use_case
+                    )
+                    
+                    # Add validation info to repository result
+                    enhanced_repo = {
+                        'name': repo.name,
+                        'url': repo.url,
+                        'description': repo.description,
+                        'stars': repo.stars,
+                        'language': repo.language,
+                        'topics': repo.topics,
+                        'collection_source': repo.collection_source,
+                        'relevance_score': repo.relevance_score,
+                        'pattern_confidence': pattern_validation.get('confidence', 0.0),
+                        'real_world_examples': pattern_validation.get('examples', []),
+                        'common_issues': pattern_validation.get('issues', []),
+                        'best_practices': pattern_validation.get('best_practices', [])
+                    }
+                    enhanced_results.append(enhanced_repo)
+            
+            # Also discover additional patterns from SourceGraph
+            if libraries:
+                integration_patterns = await sg_discovery.discover_integration_patterns(
+                    libraries,
+                    use_case
+                )
+                
+                # Add discovered patterns to results
+                for pattern in integration_patterns[:3]:  # Top 3 patterns
+                    pattern_result = {
+                        'name': f"Pattern: {', '.join(pattern.libraries)}",
+                        'url': f"pattern://{pattern.pattern_id}",
+                        'description': f"Discovered integration pattern for {pattern.use_case}",
+                        'stars': 0,
+                        'language': 'pattern',
+                        'topics': pattern.libraries,
+                        'collection_source': 'SourceGraph Discovery',
+                        'relevance_score': pattern.confidence_score,
+                        'pattern_confidence': pattern.confidence_score,
+                        'real_world_examples': [
+                            {
+                                'repository': ex.repository,
+                                'path': ex.path,
+                                'content': ex.content[:200] + '...' if len(ex.content) > 200 else ex.content
+                            } for ex in pattern.code_examples[:2]
+                        ],
+                        'common_issues': pattern.common_issues,
+                        'best_practices': pattern.best_practices
+                    }
+                    enhanced_results.append(pattern_result)
+    
+    except Exception as e:
+        logger.warning(f"SourceGraph integration failed, falling back to curated search: {str(e)}")
+        # Fallback to original results without enhancement
+        for collection in curated_collections:
+            for repo in collection.repositories:
+                enhanced_results.append({
+                    'name': repo.name,
+                    'url': repo.url,
+                    'description': repo.description,
+                    'stars': repo.stars,
+                    'language': repo.language,
+                    'topics': repo.topics,
+                    'collection_source': repo.collection_source,
+                    'relevance_score': repo.relevance_score,
+                    'pattern_confidence': 0.5,  # Default confidence
+                    'real_world_examples': [],
+                    'common_issues': [],
+                    'best_practices': []
+                })
+    
+    # Re-rank results based on pattern confidence and relevance
+    ranked_results = rank_by_pattern_confidence(enhanced_results)
+    
+    logger.info(f"Enhanced search completed, found {len(ranked_results)} results")
+    return ranked_results
+
+
+async def sg_discover_pattern(sg_discovery, repo, libraries: List[str], use_case: str) -> Dict[str, Any]:
+    """Discover and validate pattern for a specific repository."""
+    
+    try:
+        # Build query for this specific repository pattern
+        if libraries:
+            query = sg_discovery.build_pattern_query(libraries, use_case)
+            
+            # Search for patterns related to this repository
+            results = await sg_discovery.sourcegraph_search(query)
+            
+            if results:
+                # Analyze patterns
+                patterns = sg_discovery.analyze_integration_patterns(results)
+                
+                if patterns:
+                    # Return the best pattern match
+                    best_pattern = patterns[0]
+                    return {
+                        'confidence': best_pattern.confidence_score,
+                        'examples': [
+                            {
+                                'repository': ex.repository,
+                                'path': ex.path,
+                                'content': ex.content[:100] + '...' if len(ex.content) > 100 else ex.content
+                            } for ex in best_pattern.code_examples[:3]
+                        ],
+                        'issues': best_pattern.common_issues[:3],  # Top 3 issues
+                        'best_practices': best_pattern.best_practices[:3]  # Top 3 practices
+                    }
+        
+        # Default fallback
+        return {
+            'confidence': 0.6,
+            'examples': [],
+            'issues': [],
+            'best_practices': []
+        }
+        
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Pattern discovery failed for {repo.name}: {str(e)}")
+        return {
+            'confidence': 0.3,
+            'examples': [],
+            'issues': [],
+            'best_practices': []
+        }
+
+
+def rank_by_pattern_confidence(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Re-rank results based on pattern confidence and relevance."""
+    
+    def calculate_sort_score(result: Dict[str, Any]) -> float:
+        """Calculate composite score for sorting."""
+        
+        # Base relevance score
+        relevance = result.get('relevance_score', 0.0)
+        
+        # Pattern confidence (weighted more heavily)
+        pattern_confidence = result.get('pattern_confidence', 0.0)
+        
+        # Star count bonus (normalized)
+        stars = result.get('stars', 0)
+        star_bonus = min(0.2, stars / 100000)  # Max 0.2 bonus for very popular repos
+        
+        # Composite score
+        composite_score = (relevance * 0.3) + (pattern_confidence * 0.5) + star_bonus
+        
+        return composite_score
+    
+    # Sort by composite score
+    sorted_results = sorted(results, key=calculate_sort_score, reverse=True)
+    
+    return sorted_results

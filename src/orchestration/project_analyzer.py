@@ -1,17 +1,18 @@
 """
-Project Analyzer
+Project Analyzer with Tree-sitter Integration
 
 AI-powered project analysis engine that interprets user requirements
-and generates comprehensive project specifications.
+and generates comprehensive project specifications enhanced with Tree-sitter
+structural analysis via UniversalCodeAnalyzer.
 """
 
 import asyncio
-import logging
-from typing import List, Dict, Optional, Any
-from dataclasses import dataclass
-from enum import Enum
 import json
+import logging
 import os
+from dataclasses import asdict, dataclass
+from enum import Enum
+from typing import List, Dict, Optional, Any
 
 # Import AI providers
 try:
@@ -24,6 +25,23 @@ try:
     from src.cli.config_manager import ConfigManager
 except ImportError:
     ConfigManager = None
+
+# Import UniversalCodeAnalyzer for Tree-sitter integration
+try:
+    from src.analysis.universal_code_analyzer import UniversalCodeAnalyzer
+    UNIVERSAL_ANALYZER_AVAILABLE = True
+except ImportError:
+    UNIVERSAL_ANALYZER_AVAILABLE = False
+    UniversalCodeAnalyzer = None
+
+# Import Context7 integration
+try:
+    from src.analysis.context7_integration import Context7Analyzer, Context7AnalysisResult
+    CONTEXT7_AVAILABLE = True
+except ImportError:
+    CONTEXT7_AVAILABLE = False
+    Context7Analyzer = None
+    Context7AnalysisResult = None
 
 
 class ProjectType(Enum):
@@ -53,9 +71,9 @@ class ProjectAnalysis:
 
 
 class ProjectAnalyzer:
-    """AI-powered project analysis engine."""
+    """AI-powered project analysis engine with Tree-sitter structural analysis."""
     
-    def __init__(self, config_manager=None):
+    def __init__(self, config_manager=None, enable_tree_sitter: bool = True, enable_context7: bool = True):
         self.logger = logging.getLogger(__name__)
         
         # Initialize configuration manager with error handling
@@ -72,12 +90,39 @@ class ProjectAnalyzer:
             self.logger.warning("ConfigManager not available, using fallback behavior")
             self.config_manager = None
         
+        # Initialize Tree-sitter analyzer if enabled and available
+        self.enable_tree_sitter = enable_tree_sitter and UNIVERSAL_ANALYZER_AVAILABLE
+        self.tree_sitter_analyzer = None
+        if self.enable_tree_sitter:
+            try:
+                self.tree_sitter_analyzer = UniversalCodeAnalyzer()
+                self.logger.info("UniversalCodeAnalyzer initialized for Tree-sitter structural analysis")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize UniversalCodeAnalyzer: {e}")
+                self.tree_sitter_analyzer = None
+                self.enable_tree_sitter = False
+        
+        # Initialize Context7 analyzer if enabled and available
+        self.enable_context7 = enable_context7 and CONTEXT7_AVAILABLE
+        self.context7_analyzer = None
+        if self.enable_context7:
+            try:
+                self.context7_analyzer = Context7Analyzer(enable_fallback=True)
+                self.logger.info("Context7Analyzer initialized for enhanced code analysis")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize Context7Analyzer: {e}")
+                self.context7_analyzer = None
+                self.enable_context7 = False
+        
         # Initialize AI provider configurations
         self.ai_providers = {}
         self._initialize_providers()
         
         # Function name for API key resolution
         self.function_name = 'project_analyzer'
+        
+        # Context7 analysis configuration
+        self.context7_analysis_types = ['structure', 'api', 'security', 'performance']
         
         # Project analysis patterns
         self.analysis_patterns = {
@@ -161,13 +206,15 @@ class ProjectAnalyzer:
         except Exception as e:
             self.logger.error(f"Failed to initialize AI providers: {e}")
     
-    async def analyze_project_prompt(self, prompt: str, provider: str = None) -> ProjectAnalysis:
+    async def analyze_project_prompt(self, prompt: str, provider: str = None,
+                                   source_files: Optional[List[str]] = None) -> ProjectAnalysis:
         """
         Analyze a project prompt and generate comprehensive project specifications.
         
         Args:
             prompt: User's project description/requirements
             provider: AI provider to use for analysis (None for function's preferred provider)
+            source_files: Optional list of source files for Tree-sitter structural analysis
             
         Returns:
             ProjectAnalysis: Comprehensive analysis of the project requirements
@@ -178,10 +225,307 @@ class ProjectAnalyzer:
         ai_analysis = await self._get_ai_analysis(prompt, provider)
         
         if ai_analysis:
+            # Enhance AI analysis with Tree-sitter structural data if source files provided
+            if source_files and self.enable_tree_sitter:
+                enhanced_analysis = await self._enhance_with_structural_analysis(ai_analysis, source_files)
+                return enhanced_analysis
+            
+            # Enhance with Context7 insights if available
+            if source_files and self.enable_context7:
+                context7_analysis = await self._enhance_with_context7_analysis(ai_analysis, source_files)
+                if context7_analysis:
+                    return context7_analysis
+            
             return ai_analysis
         
-        # Fallback to pattern-based analysis
-        return self._pattern_based_analysis(prompt)
+        # Fallback to pattern-based analysis with optional Tree-sitter and Context7 enhancement
+        pattern_analysis = self._pattern_based_analysis(prompt)
+        
+        if source_files and self.enable_tree_sitter:
+            enhanced_analysis = await self._enhance_with_structural_analysis(pattern_analysis, source_files)
+            pattern_analysis = enhanced_analysis
+        
+        if source_files and self.enable_context7:
+            context7_analysis = await self._enhance_with_context7_analysis(pattern_analysis, source_files)
+            if context7_analysis:
+                pattern_analysis = context7_analysis
+        
+        return pattern_analysis
+    
+    async def _enhance_with_structural_analysis(self, analysis: ProjectAnalysis,
+                                             source_files: List[str]) -> ProjectAnalysis:
+        """
+        Enhance project analysis with Tree-sitter structural data from source files.
+        
+        Args:
+            analysis: Existing project analysis
+            source_files: List of source files to analyze
+            
+        Returns:
+            Enhanced ProjectAnalysis with structural metrics
+        """
+        try:
+            # Analyze source files for structural information
+            structural_metrics = await self._analyze_source_files_structure(source_files)
+            
+            # Enhance components with structural insights
+            if structural_metrics['complexity_score'] > 0.7:
+                analysis.estimated_complexity = 'high'
+            elif structural_metrics['complexity_score'] > 0.4:
+                analysis.estimated_complexity = 'medium'
+            else:
+                analysis.estimated_complexity = 'low'
+            
+            # Add structural insights to components
+            enhanced_components = analysis.components.copy()
+            
+            if structural_metrics['classes_count'] > 10:
+                enhanced_components.append('large_class_architecture')
+            elif structural_metrics['classes_count'] > 5:
+                enhanced_components.append('modular_class_structure')
+            
+            if structural_metrics['functions_count'] > 20:
+                enhanced_components.append('function_decomposition_needed')
+            elif structural_metrics['functions_count'] > 10:
+                enhanced_components.append('modular_function_structure')
+            
+            if structural_metrics.get('has_tests', False):
+                enhanced_components.append('test_suite_present')
+            else:
+                enhanced_components.append('test_suite_required')
+            
+            if structural_metrics.get('has_docs', False):
+                enhanced_components.append('documentation_present')
+            else:
+                enhanced_components.append('documentation_required')
+            
+            # Update analysis with enhanced components
+            analysis.components = enhanced_components
+            
+            # Adjust confidence based on structural analysis quality
+            analysis.confidence = min(0.95, analysis.confidence + 0.1)
+            
+            self.logger.info(f"Enhanced analysis with structural metrics: {structural_metrics}")
+            
+            return analysis
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to enhance analysis with structural data: {e}")
+            return analysis
+    
+    async def _enhance_with_context7_analysis(self, analysis: ProjectAnalysis,
+                                            source_files: List[str]) -> Optional[ProjectAnalysis]:
+        """
+        Enhance project analysis with Context7 insights and API validation.
+        
+        Args:
+            analysis: Existing project analysis
+            source_files: List of source files for Context7 analysis
+            
+        Returns:
+            Enhanced ProjectAnalysis with Context7 insights, or None if analysis fails
+        """
+        if not self.context7_analyzer:
+            return None
+        
+        try:
+            self.logger.info("Enhancing analysis with Context7 insights...")
+            
+            # Perform Context7 analysis on source files
+            context7_results = []
+            total_confidence_boost = 0.0
+            context7_insights = []
+            api_validations = []
+            code_issues = []
+            
+            for file_path in source_files[:5]:  # Limit to first 5 files for performance
+                try:
+                    # Skip non-existent files
+                    if not os.path.exists(file_path):
+                        continue
+                    
+                    # Analyze file with Context7
+                    result = await self.context7_analyzer.analyze_file(
+                        file_path,
+                        self._detect_language(file_path),
+                        self.context7_analysis_types
+                    )
+                    
+                    if result and result.success:
+                        context7_results.append(result)
+                        total_confidence_boost += result.confidence_score
+                        
+                        # Collect insights
+                        if result.insights:
+                            context7_insights.extend(
+                                f"{file_path}: {key} = {value}"
+                                for key, value in result.insights.items()
+                            )
+                        
+                        # Collect API validations
+                        api_validations.extend(result.api_validations)
+                        
+                        # Collect code issues
+                        code_issues.extend(result.code_issues)
+                        
+                except Exception as e:
+                    self.logger.warning(f"Context7 analysis failed for {file_path}: {e}")
+                    continue
+            
+            # Enhance analysis with Context7 insights
+            if context7_results:
+                # Boost confidence based on Context7 analysis quality
+                avg_confidence_boost = total_confidence_boost / len(context7_results)
+                analysis.confidence = min(0.98, analysis.confidence + (avg_confidence_boost * 0.1))
+                
+                # Add Context7 insights to components
+                enhanced_components = analysis.components.copy()
+                
+                # Add components based on API validations
+                if api_validations:
+                    enhanced_components.append('api_validation_performed')
+                    if any(v.validation_status == 'warning' for v in api_validations):
+                        enhanced_components.append('api_security_review_needed')
+                
+                # Add components based on code issues
+                if code_issues:
+                    issue_types = set(issue['type'] for issue in code_issues)
+                    if 'high_complexity' in issue_types:
+                        enhanced_components.append('complexity_refactoring_needed')
+                    if 'missing_tests' in issue_types:
+                        enhanced_components.append('test_implementation_required')
+                
+                # Add Context7-specific insights
+                if context7_insights:
+                    enhanced_components.append('context7_analysis_performed')
+                    
+                    # Check for performance insights
+                    performance_insights = [
+                        insight for insight in context7_insights
+                        if 'performance' in insight.lower() or 'complexity' in insight.lower()
+                    ]
+                    if performance_insights:
+                        enhanced_components.append('performance_optimization_opportunities')
+                
+                analysis.components = enhanced_components
+                
+                # Update estimated complexity based on Context7 analysis
+                complexity_scores = [
+                    result.insights.get('complexity_score', 0.5)
+                    for result in context7_results
+                    if result.insights
+                ]
+                
+                if complexity_scores:
+                    avg_complexity = sum(complexity_scores) / len(complexity_scores)
+                    if avg_complexity > 0.7:
+                        analysis.estimated_complexity = 'high'
+                    elif avg_complexity > 0.4:
+                        analysis.estimated_complexity = 'medium'
+                    else:
+                        analysis.estimated_complexity = 'low'
+                
+                self.logger.info(f"Enhanced analysis with {len(context7_results)} Context7 results")
+                
+                return analysis
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to enhance analysis with Context7 data: {e}")
+        
+        return None
+    
+    def _detect_language(self, file_path: str) -> str:
+        """Detect programming language from file path."""
+        extension = os.path.splitext(file_path)[1].lower().lstrip('.')
+        
+        language_map = {
+            'py': 'python',
+            'js': 'javascript',
+            'ts': 'typescript',
+            'java': 'java',
+            'go': 'go',
+            'rs': 'rust',
+            'php': 'php',
+            'rb': 'ruby',
+            'c': 'c',
+            'cpp': 'cpp',
+            'cs': 'csharp',
+            'swift': 'swift',
+            'kt': 'kotlin'
+        }
+        
+        return language_map.get(extension, 'python')  # Default to Python
+    
+    async def _analyze_source_files_structure(self, source_files: List[str]) -> Dict[str, Any]:
+        """
+        Analyze source files structure using Tree-sitter.
+        
+        Args:
+            source_files: List of source file paths
+            
+        Returns:
+            Dictionary containing structural metrics
+        """
+        if not self.tree_sitter_analyzer:
+            return {}
+        
+        structural_metrics = {
+            'complexity_score': 0.0,
+            'classes_count': 0,
+            'functions_count': 0,
+            'has_tests': False,
+            'has_docs': False,
+            'average_file_size': 0,
+            'total_files_analyzed': 0
+        }
+        
+        total_files = 0
+        total_complexity = 0.0
+        total_classes = 0
+        total_functions = 0
+        
+        try:
+            for file_path in source_files:
+                try:
+                    # Skip non-existent files
+                    if not os.path.exists(file_path):
+                        continue
+                    
+                    # Analyze file with Tree-sitter
+                    file_result = self.tree_sitter_analyzer.analyze_file(file_path)
+                    
+                    if file_result and file_result.get('success'):
+                        total_files += 1
+                        
+                        # Extract metrics
+                        metrics = file_result.get('metrics', {})
+                        structure = file_result.get('structure', {})
+                        
+                        total_complexity += float(metrics.get('complexity_score', 0.0))
+                        total_classes += int(metrics.get('classes_count', 0))
+                        total_functions += int(metrics.get('functions_count', 0))
+                        
+                        # Check for tests and documentation
+                        if structure.get('has_tests', False):
+                            structural_metrics['has_tests'] = True
+                        if structure.get('has_docs', False):
+                            structural_metrics['has_docs'] = True
+                        
+                except Exception as e:
+                    self.logger.warning(f"Error analyzing {file_path}: {e}")
+                    continue
+            
+            # Calculate averages
+            if total_files > 0:
+                structural_metrics['complexity_score'] = total_complexity / total_files
+                structural_metrics['classes_count'] = total_classes
+                structural_metrics['functions_count'] = total_functions
+                structural_metrics['total_files_analyzed'] = total_files
+            
+        except Exception as e:
+            self.logger.error(f"Error in structural analysis: {e}")
+        
+        return structural_metrics
     
     async def _get_ai_analysis(self, prompt: str, provider: str = None) -> Optional[ProjectAnalysis]:
         """Get AI-powered project analysis."""
@@ -373,7 +717,7 @@ class ProjectAnalyzer:
     async def get_analysis_summary(self, analysis: ProjectAnalysis) -> Dict[str, Any]:
         """Generate a summary of the project analysis."""
         
-        return {
+        summary = {
             'project_name': analysis.name,
             'project_type': analysis.project_type.value,
             'primary_language': analysis.language,
@@ -385,3 +729,157 @@ class ProjectAnalyzer:
             'top_components': analysis.components[:5],
             'key_dependencies': analysis.dependencies[:5]
         }
+        
+        # Add Tree-sitter analysis information if available
+        if self.enable_tree_sitter:
+            summary['tree_sitter_enabled'] = True
+            summary['structural_analysis_available'] = self.tree_sitter_analyzer is not None
+            summary['supported_languages'] = self.tree_sitter_analyzer.get_supported_languages() if self.tree_sitter_analyzer else []
+        else:
+            summary['tree_sitter_enabled'] = False
+            summary['structural_analysis_available'] = False
+        
+        # Add Context7 analysis information if available
+        if self.enable_context7:
+            summary['context7_enabled'] = True
+            summary['context7_analysis_available'] = self.context7_analyzer is not None
+            if self.context7_analyzer:
+                context7_status = self.context7_analyzer.get_context7_status()
+                summary['context7_status'] = context7_status
+                summary['supported_languages'] = context7_status.get('supported_languages', [])
+        else:
+            summary['context7_enabled'] = False
+            summary['context7_analysis_available'] = False
+        
+        return summary
+    
+    def get_tree_sitter_status(self) -> Dict[str, Any]:
+        """Get status of Tree-sitter integration."""
+        return {
+            'enabled': self.enable_tree_sitter,
+            'analyzer_available': self.tree_sitter_analyzer is not None,
+            'supported_languages': self.tree_sitter_analyzer.get_supported_languages() if self.tree_sitter_analyzer else [],
+            'cache_info': self.tree_sitter_analyzer.get_cache_info() if self.tree_sitter_analyzer else None
+        }
+    
+    def get_context7_status(self) -> Dict[str, Any]:
+        """Get status of Context7 integration."""
+        if not self.context7_analyzer:
+            return {
+                'enabled': self.enable_context7,
+                'analyzer_available': False,
+                'context7_available': False,
+                'fallback_available': False,
+                'supported_languages': [],
+                'config': {}
+            }
+        
+        return self.context7_analyzer.get_context7_status()
+    
+    async def validate_project_apis(self, source_files: List[str]) -> List[Dict[str, Any]]:
+        """
+        Validate API endpoints and patterns across the project using Context7.
+        
+        Args:
+            source_files: List of source files to validate
+            
+        Returns:
+            List of API validation results
+        """
+        if not self.context7_analyzer:
+            return []
+        
+        try:
+            self.logger.info("Validating project APIs with Context7...")
+            
+            api_validations = []
+            validated_files = 0
+            
+            for file_path in source_files[:10]:  # Limit to first 10 files for performance
+                try:
+                    if not os.path.exists(file_path):
+                        continue
+                    
+                    language = self._detect_language(file_path)
+                    file_validations = await self.context7_analyzer.validate_apis(file_path, language)
+                    
+                    api_validations.extend([
+                        {
+                            'file': file_path,
+                            'language': language,
+                            'validation': asdict(validation) if hasattr(validation, '__dict__') else validation
+                        }
+                        for validation in file_validations
+                    ])
+                    
+                    validated_files += 1
+                    
+                except Exception as e:
+                    self.logger.warning(f"API validation failed for {file_path}: {e}")
+                    continue
+            
+            self.logger.info(f"API validation completed for {validated_files} files")
+            return api_validations
+            
+        except Exception as e:
+            self.logger.error(f"Project API validation failed: {e}")
+            return []
+    
+    async def real_time_project_analysis(self, source_files: List[str]) -> Dict[str, Any]:
+        """
+        Perform real-time analysis of the project using Context7.
+        
+        Args:
+            source_files: List of source files to analyze
+            
+        Returns:
+            Dictionary containing real-time analysis results
+        """
+        if not self.context7_analyzer:
+            return {'error': 'Context7 analyzer not available'}
+        
+        try:
+            self.logger.info("Performing real-time project analysis...")
+            
+            analysis_results = []
+            analyzed_files = 0
+            
+            for file_path in source_files[:5]:  # Limit to first 5 files for performance
+                try:
+                    if not os.path.exists(file_path):
+                        continue
+                    
+                    language = self._detect_language(file_path)
+                    result = await self.context7_analyzer.real_time_analysis(file_path, language)
+                    
+                    if result and result.success:
+                        analysis_results.append({
+                            'file': file_path,
+                            'language': language,
+                            'insights': result.insights,
+                            'api_validations': [
+                                asdict(validation) if hasattr(validation, '__dict__') else validation
+                                for validation in result.api_validations
+                            ],
+                            'code_issues': result.code_issues,
+                            'recommendations': result.recommendations,
+                            'confidence': result.confidence_score
+                        })
+                    
+                    analyzed_files += 1
+                    
+                except Exception as e:
+                    self.logger.warning(f"Real-time analysis failed for {file_path}: {e}")
+                    continue
+            
+            return {
+                'success': True,
+                'analyzed_files': analyzed_files,
+                'total_files': len(source_files),
+                'analysis_results': analysis_results,
+                'timestamp': self.context7_analyzer._get_timestamp() if hasattr(self.context7_analyzer, '_get_timestamp') else None
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Real-time project analysis failed: {e}")
+            return {'error': str(e)}
